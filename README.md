@@ -777,6 +777,38 @@ The following Rule pattern would match the above event, i.e., any event where:
 > Consult the EventBridge event patterns
 > [documentation](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html) for a complete
 > explanation of available patterns.
+> 
+## Using EventBridge Input Transformations to restructure events
+
+EventBridge [input transformations](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-transform-target-input.html) allow you to reshape events before they're delivered to targets. This is particularly useful when working with the Kafka connector to:
+
+1. Flatten and restructure events
+1. Remove unnecessary fields from the event
+1. Add additional fields or context to the event
+1. Transform the event format to match target system requirements
+
+### Example: Flattening Kafka Message Structure
+
+To transform the incoming Kafka event (see example above) into a flattened structure with just event topic, key, and value information, in your EventBridge rule and target, configure the Input Path and Template as below:
+
+**Input path:**
+```json
+{
+  "topic": "$.detail.topic",
+  "messageKey": "$.detail.key",
+  "content": "$.detail.value"
+}
+```
+
+**Input template:**
+```json
+{
+  "topic": <topic>,
+  "messageKey": <messageKey>,
+  "content": <content>
+}
+```
+
 ## Troubleshooting
 
 Common issues are around schema handling, authentication and authorization (IAM), and debugging the event flow.
