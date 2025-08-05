@@ -22,7 +22,7 @@
         <aws.java.sdk.version>2.32.14</aws.java.sdk.version>
         <aws.schema.registry.version>1.1.15</aws.schema.registry.version>
         <ch.qos.logback.version>1.5.18</ch.qos.logback.version>
-        <com.fasterxml.jackson.version>2.19.1</com.fasterxml.jackson.version>
+        <com.fasterxml.jackson.version>2.19.2</com.fasterxml.jackson.version>
         <com.jayway.jsonpath.version>2.9.0</com.jayway.jsonpath.version>
         <net.minidev.json-smart.version>2.6.0</net.minidev.json-smart.version>
         <commons-codec.version>1.18.0</commons-codec.version>
