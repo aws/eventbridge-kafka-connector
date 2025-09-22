@@ -31,7 +31,7 @@
         <equalsverifier.version>3.19.4</equalsverifier.version>
         <joda-time.version>2.14.0</joda-time.version>
         <org.apache.commons.version>3.18.0</org.apache.commons.version>
-        <org.assertj.version>3.27.4</org.assertj.version>
+        <org.assertj.version>3.27.5</org.assertj.version>
         <org.awaitility.version>4.3.0</org.awaitility.version>
         <org.hamcrest.version>3.0</org.hamcrest.version>
         <org.jacoco.version>0.8.13</org.jacoco.version>
