@@ -30,7 +30,7 @@
         <connect.api.version>3.9.1</connect.api.version>
         <equalsverifier.version>3.19.4</equalsverifier.version>
         <joda-time.version>2.14.0</joda-time.version>
-        <org.apache.commons.version>3.18.0</org.apache.commons.version>
+        <org.apache.commons.version>3.19.0</org.apache.commons.version>
         <org.assertj.version>3.27.6</org.assertj.version>
         <org.awaitility.version>4.3.0</org.awaitility.version>
         <org.hamcrest.version>3.0</org.hamcrest.version>
