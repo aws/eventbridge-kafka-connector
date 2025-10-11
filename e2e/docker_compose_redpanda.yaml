@@ -1,7 +1,7 @@
 services:
   # is redpanda: reusing names to not break kafka integration tests
   kafka:
-    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-v24.2.21}
+    image: docker.redpanda.com/redpandadata/redpanda:${REDPANDA_VERSION:-v25.2.9}
     command:
       - redpanda
       - start
@@ -17,7 +17,7 @@ services:
       - "9092:9092"
 
   connect:
-    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.0.0}
+    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.0}
     depends_on:
       - kafka
     ports:
@@ -35,6 +35,6 @@ services:
     command: ["/bin/bash","-c","env && /opt/kafka/bin/connect-standalone.sh /mnt/connect-standalone.properties"]
 
   localstack:
-    image: docker.io/localstack/localstack:4.3.0
+    image: docker.io/localstack/localstack:4.9.2
     ports:
       - "4566"
