@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector.batch;
 
 import static java.util.Collections.singletonList;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,7 +28,7 @@ public class SingletonEventBridgeBatchingTest {
           xs ->
               xs.stream()
                   .map(it -> ((Struct) it.getSinkRecord().value()).get("id").toString())
-                  .collect(toList());
+                  .toList();
 
   private static final String[] Ids = {
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"
@@ -41,7 +40,7 @@ public class SingletonEventBridgeBatchingTest {
   @ValueSource(ints = {0, 1, 2, 5, 10})
   public void shouldBatchListOfSize(int size) {
     var input = range(0, size).mapToObj(index -> createMappedSinkRecord(Ids[index]));
-    var expected = range(0, size).mapToObj(index -> singletonList(Ids[index])).collect(toList());
+    var expected = range(0, size).mapToObj(index -> singletonList(Ids[index])).toList();
 
     assertThat(strategy.apply(input)).extracting(sinkRecordId).hasSameElementsAs(expected);
   }
