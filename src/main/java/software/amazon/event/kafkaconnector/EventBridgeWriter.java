@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static java.util.stream.Collectors.toList;
 import static software.amazon.awssdk.core.client.config.SdkAdvancedClientOption.USER_AGENT_PREFIX;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.panic;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.reportOnly;
@@ -189,10 +188,7 @@ public class EventBridgeWriter {
     }
 
     var sendItemResults =
-        batching
-            .apply(offloadingResult.success.stream())
-            .flatMap(this::sendToEventBridge)
-            .collect(toList());
+        batching.apply(offloadingResult.success.stream()).flatMap(this::sendToEventBridge).toList();
 
     return concat(sendItemResults, mappingResult.getErrorsAsResult());
   }
@@ -202,7 +198,7 @@ public class EventBridgeWriter {
     try {
       var requestBuilder =
           PutEventsRequest.builder()
-              .entries(items.stream().map(MappedSinkRecord::getValue).collect(toList()));
+              .entries(items.stream().map(MappedSinkRecord::getValue).toList());
 
       if (config.endpointID != null && !config.endpointID.isEmpty()) {
         requestBuilder.endpointId(config.endpointID);
@@ -225,8 +221,8 @@ public class EventBridgeWriter {
         | TimeoutException e) {
 
       var cause = e.getCause();
-      if (cause instanceof EventBridgeException) {
-        var code = ((EventBridgeException) cause).statusCode();
+      if (cause instanceof EventBridgeException eventBridgeException) {
+        var code = eventBridgeException.statusCode();
         // entries size limit exceeded
         if (code == HttpStatusCode.REQUEST_TOO_LONG) {
           return items.stream()
@@ -275,6 +271,6 @@ public class EventBridgeWriter {
    * @return the concatenation of both given lists
    */
   private static <T> List<T> concat(Collection<T> left, Collection<T> right) {
-    return Stream.concat(left.stream(), right.stream()).collect(toList());
+    return Stream.concat(left.stream(), right.stream()).toList();
   }
 }

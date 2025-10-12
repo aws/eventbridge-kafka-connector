@@ -4,7 +4,6 @@
  */
 package software.amazon.event.kafkaconnector;
 
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.Stream.empty;
 
 import java.time.Duration;
@@ -66,7 +65,7 @@ public class EventBridgeSinkTask extends SinkTask {
   @Override
   public void put(Collection<SinkRecord> records) {
     log.trace("EventBridgeSinkTask put called with {} records: {}", records.size(), records);
-    if (records.size() == 0) {
+    if (records.isEmpty()) {
       log.trace("Returning early: 0 records received");
       return;
     }
@@ -88,7 +87,7 @@ public class EventBridgeSinkTask extends SinkTask {
           eventBridgeWriter.putItems(remainingRecords).stream()
               .filter(EventBridgeResult::isFailure)
               .flatMap(it -> handleFailedEntries(it.failure(), attempts.get()))
-              .collect(toList());
+              .toList();
 
       // only report successful putEvents calls
       statusReporter.setSentRecords(records.size());
