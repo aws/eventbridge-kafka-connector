@@ -4,8 +4,6 @@
  */
 package software.amazon.event.kafkaconnector.mapping;
 
-import static java.util.stream.Collectors.toList;
-
 import java.util.List;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
 import software.amazon.event.kafkaconnector.EventBridgeResult;
@@ -24,6 +22,6 @@ public class EventBridgeMappingResult {
   }
 
   public <T> List<EventBridgeResult<T>> getErrorsAsResult() {
-    return this.errors.stream().map(EventBridgeResult::<T>failure).collect(toList());
+    return this.errors.stream().map(EventBridgeResult::<T>failure).toList();
   }
 }

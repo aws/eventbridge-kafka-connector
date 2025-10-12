@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector.mapping;
 
 import static java.util.stream.Collectors.partitioningBy;
-import static java.util.stream.Collectors.toList;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.reportOnly;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.failure;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
@@ -41,9 +40,9 @@ public class DefaultEventBridgeMapper implements EventBridgeMapper {
             .collect(partitioningBy(EventBridgeResult::isSuccess));
 
     var successfulMappedRecords =
-        partition.get(true).stream().map(EventBridgeResult::success).collect(toList());
+        partition.get(true).stream().map(EventBridgeResult::success).toList();
     var failedMappedRecords =
-        partition.get(false).stream().map(EventBridgeResult::failure).collect(toList());
+        partition.get(false).stream().map(EventBridgeResult::failure).toList();
 
     return new EventBridgeMappingResult(successfulMappedRecords, failedMappedRecords);
   }

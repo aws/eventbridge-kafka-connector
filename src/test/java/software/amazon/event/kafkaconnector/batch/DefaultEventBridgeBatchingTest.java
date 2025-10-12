@@ -7,7 +7,6 @@ package software.amazon.event.kafkaconnector.batch;
 import static ch.qos.logback.classic.Level.TRACE;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.emptyList;
-import static java.util.stream.Collectors.toList;
 import static org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -142,8 +141,7 @@ class DefaultEventBridgeBatchingTest {
                   PutEventsRequestEntry.builder()
                       .source("")
                       .detailType("")
-                      .resources(
-                          Stream.generate(() -> "\uD83D\uDC4D").limit(size).collect(toList()))
+                      .resources(Stream.generate(() -> "\uD83D\uDC4D").limit(size).toList())
                       .build()))
           .isEqualTo(size * "\uD83D\uDC4D".getBytes(UTF_8).length);
     }
@@ -162,8 +160,7 @@ class DefaultEventBridgeBatchingTest {
   public void shouldGenerateBatches(
       Stream<MappedSinkRecord<PutEventsRequestEntry>> records, Iterable<List<String>> expected) {
     assertThat(strategy.apply(records))
-        .extracting(it -> it.stream().map(e -> e.getValue().eventBusName()).collect(toList()))
-        .asList()
+        .extracting(it -> it.stream().map(e -> e.getValue().eventBusName()).toList())
         .containsExactlyElementsOf(expected);
   }
 
@@ -176,8 +173,7 @@ class DefaultEventBridgeBatchingTest {
       String title,
       Iterable<List<String>> expected) {
     assertThat(strategy.apply(records))
-        .extracting(it -> it.stream().map(e -> e.getValue().eventBusName()).collect(toList()))
-        .asList()
+        .extracting(it -> it.stream().map(e -> e.getValue().eventBusName()).toList())
         .containsExactlyElementsOf(expected);
   }
 

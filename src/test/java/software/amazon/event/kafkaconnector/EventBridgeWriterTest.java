@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.IntStream.rangeClosed;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,7 +101,7 @@ public class EventBridgeWriterTest {
         .map(EventBridgeResult::failure)
         .extracting(it -> it.getValue().getType())
         .containsExactlyElementsOf(
-            Stream.generate(() -> EventBridgeResult.ErrorType.RETRY).limit(10).collect(toList()));
+            Stream.generate(() -> EventBridgeResult.ErrorType.RETRY).limit(10).toList());
 
     verify(eventBridgeAsyncClient).putEvents(any(PutEventsRequest.class));
     verifyNoMoreInteractions(eventBridgeAsyncClient);
@@ -132,7 +131,7 @@ public class EventBridgeWriterTest {
         .map(EventBridgeResult::failure)
         .extracting(it -> it.getValue().getType())
         .containsExactlyElementsOf(
-            Stream.generate(() -> EventBridgeResult.ErrorType.RETRY).limit(5).collect(toList()));
+            Stream.generate(() -> EventBridgeResult.ErrorType.RETRY).limit(5).toList());
 
     verify(eventBridgeAsyncClient, times(2)).putEvents(putEventsArgumentCaptor.capture());
     verifyNoMoreInteractions(eventBridgeAsyncClient);
@@ -152,7 +151,7 @@ public class EventBridgeWriterTest {
                                 .errorCode("errorCode")
                                 .errorMessage("errorMessage")
                                 .build()))
-                    .collect(toList()))
+                    .toList())
             .build();
     var secondResponse =
         PutEventsResponse.builder()
@@ -165,7 +164,7 @@ public class EventBridgeWriterTest {
                                 .errorMessage("errorMessage")
                                 .build()),
                         OfPutEventsResultEntry.withIdsIn(rangeClosed(12, 15)).stream())
-                    .collect(toList()))
+                    .toList())
             .build();
 
     when(eventBridgeAsyncClient.putEvents(any(PutEventsRequest.class)))

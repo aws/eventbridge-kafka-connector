@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector.offloading;
 
 import static java.util.Collections.emptyList;
-import static java.util.stream.Collectors.toList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.stream.Stream;
@@ -38,7 +37,7 @@ class NoOpEventBridgeEventDetailValueOffloadingTest {
     var items =
         Stream.generate(() -> new MappedSinkRecord<PutEventsRequestEntry>(null, null))
             .limit(size)
-            .collect(toList());
+            .toList();
 
     var actual = strategy.apply(items);
 

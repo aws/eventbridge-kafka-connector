@@ -5,7 +5,6 @@
 package software.amazon.event.kafkaconnector;
 
 import static java.util.concurrent.CompletableFuture.completedFuture;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.IntStream.rangeClosed;
 import static org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -194,6 +193,6 @@ public class EventBridgeSinkTaskTest {
                     throw new RuntimeException(e);
                   }
                 })
-            .collect(toList());
+            .toList();
   }
 }
