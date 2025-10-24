@@ -12,7 +12,6 @@ import static software.amazon.event.kafkaconnector.EventBridgeSinkConfig.*;
 
 import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigException;
@@ -247,7 +246,7 @@ public class EventBridgeSinkConfigValidator {
         Stream.of(AWS_PROFILE, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_ACCESS_KEY_ID)
             .map(Enum::toString)
             .filter(env -> (envVarGetter.get(env) != null))
-            .collect(Collectors.toList());
+            .toList();
 
     if (!conflictingAwsEnvVars.isEmpty()) {
       throw new ConfigException(

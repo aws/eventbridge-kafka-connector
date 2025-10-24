@@ -11,7 +11,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.time.ZoneOffset.UTC;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.partitioningBy;
-import static java.util.stream.Collectors.toList;
 import static software.amazon.awssdk.core.async.AsyncRequestBody.fromString;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.panic;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.retry;
@@ -140,8 +139,8 @@ public class S3EventBridgeEventDetailValueOffloading
             .map(this::apply)
             .collect(partitioningBy(EventBridgeResult::isSuccess));
 
-    var success = result.get(true).stream().map(EventBridgeResult::success).collect(toList());
-    var errors = result.get(false).stream().map(EventBridgeResult::failure).collect(toList());
+    var success = result.get(true).stream().map(EventBridgeResult::success).toList();
+    var errors = result.get(false).stream().map(EventBridgeResult::failure).toList();
 
     return new EventBridgeMappingResult(success, errors);
   }
@@ -177,7 +176,7 @@ public class S3EventBridgeEventDetailValueOffloading
           || unwrapped instanceof TimeoutException) {
 
         var cause = unwrapped.getCause();
-        if (cause instanceof S3Exception && ((S3Exception) cause).statusCode() < 500) {
+        if (cause instanceof S3Exception s3exception && s3exception.statusCode() < 500) {
           return failure(sinkRecord, panic(e));
         }
         return failure(sinkRecord, retry(e));

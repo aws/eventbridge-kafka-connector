@@ -7,7 +7,7 @@ package software.amazon.event.kafkaconnector.cache;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import nl.jqno.equalsverifier.EqualsVerifier;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class MessageDigestCacheKeyTest {
 

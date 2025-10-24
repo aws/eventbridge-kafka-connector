@@ -61,7 +61,7 @@ install these dependencies in your Kafka Connect environment before deploying th
 ### From Source
 
 The following steps describe how to clone the repo and perform a clean packaging of the connector. Requires Maven and
-Java Development Kit (JDK 11 or later).
+Java Development Kit (JDK 17 or later).
 
 Clone the repo:
 
@@ -92,7 +92,7 @@ cd eventbridge-kafka-connector
 Create JAR artifacts:
 
 ```console
-docker run --rm -v $(pwd):/src -w /src -it maven:3-eclipse-temurin-11 \
+docker run --rm -v $(pwd):/src -w /src -it maven:3-eclipse-temurin-i7 \
 mvn clean package -Drevision=$(git describe --tags --always)
 ```
 

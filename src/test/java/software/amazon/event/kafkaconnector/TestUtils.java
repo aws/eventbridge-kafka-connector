@@ -4,7 +4,6 @@
  */
 package software.amazon.event.kafkaconnector;
 
-import static java.util.stream.Collectors.toList;
 import static org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
 
 import ch.qos.logback.classic.Level;
@@ -50,7 +49,7 @@ public abstract class TestUtils {
                       testSchema,
                       new Struct(testSchema).put("id", Integer.toString(id)),
                       id))
-          .collect(toList());
+          .toList();
     }
   }
 
@@ -62,7 +61,7 @@ public abstract class TestUtils {
       return range
           .mapToObj(
               id -> PutEventsResultEntry.builder().eventId(String.format("eventId:%d", id)).build())
-          .collect(toList());
+          .toList();
     }
   }
 
