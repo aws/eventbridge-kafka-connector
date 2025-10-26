@@ -52,7 +52,7 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       # KAFKA_OPTS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
     volumes:
-      - ${PWD}/../target:/usr/local/share/java/connect/kafka-eventbridge-sink
+      - ${PWD}/target:/usr/local/share/java/connect/kafka-eventbridge-sink
 
   localstack:
     image: docker.io/localstack/localstack:4.9.2
