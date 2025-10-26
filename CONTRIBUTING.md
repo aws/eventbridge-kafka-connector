@@ -85,10 +85,10 @@ mvn clean package -Drevision=$(git describe --tags --always)
 
 #### Integration Tests with Docker Compose
 
-To execute the integration tests (requires [Docker](https://docker.com/)) run:
+To execute the integration tests (requires [Docker](https://docker.com/) with [compose](https://github.com/docker/compose) plugin) run:
 
 ```bash
-export KAFKA_VERSION=4.0.0
+export KAFKA_VERSION=4.1.0
 export COMPOSE_FILE=e2e/docker_compose.yaml
 mvn clean verify -Drevision=$(git describe --tags --always)
 ```
@@ -116,9 +116,6 @@ locally e.g., to create the local environment:
 ```bash
 # create the JAR which will be loaded into Kafka Connect (Docker Volume)
 mvn clean package -Drevision=$(git describe --tags --always)
-
-# move to the e2e directory
-cd e2e
 ```
 
 Skip the next step if you already have these credentials configured in your environment:
@@ -139,7 +136,7 @@ export AWS_SESSION_TOKEN=ABCDEFGHIJKLMNOPQRST
 The following command removes any previous resources and creates the local test environment:
 
 ```bash
-docker compose -f docker_compose.yaml down --remove-orphans -v && docker compose -f docker_compose.yaml up
+docker compose -f e2e/docker_compose.yaml down --remove-orphans -v && docker compose -f e2e/docker_compose.yaml up
 ```
 
 > [!NOTE]  
@@ -153,10 +150,10 @@ e2e-connect-1     | [2023-07-12 09:07:29,263] INFO Kafka Connect started (org.ap
 ```
 
 Change the JSON configuration example `connect-config.json` (uses LocalStack defaults) according to your
-environment. In a separate terminal (within the `e2e` folder) deploy the connector:
+environment. In a separate terminal (within the project root folder) deploy the connector:
 
 ```bash
-curl -i --fail-with-body -X POST -H "Accept:application/json" -H  "Content-Type:application/json" http://$(docker compose -f docker_compose.yaml port connect 8083)/connectors/ -d @connect-config.json
+curl -i --fail-with-body -X POST -H "Accept:application/json" -H  "Content-Type:application/json" http://$(docker compose -f e2e/docker_compose.yaml port connect 8083)/connectors/ -d @e2e/connect-config.json
 ```
 
 The output should look like:
@@ -184,7 +181,7 @@ Produce a Kafka record to invoke the EventBridge sink connector:
 
 ```bash
 # open a shell in the Kafka broker container
-docker compose -f docker_compose.yaml exec -w /opt/kafka/bin kafka /bin/bash
+docker compose -f e2e/docker_compose.yaml exec -w /opt/kafka/bin kafka /bin/bash
 
 # produce an event
 # replace the topic with your connector settings if needed
@@ -231,7 +228,7 @@ The output event should look similar to the below:
 To tear down the environment run:
 
 ```bash
-docker compose -f docker_compose.yaml down --remove-orphans -v
+docker compose -f e2e/docker_compose.yaml down --remove-orphans -v
 ```
 
 ##### Remote Debug the Connector

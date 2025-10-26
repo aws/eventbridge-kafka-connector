@@ -39,7 +39,7 @@
         <org.mockito.version>5.20.0</org.mockito.version>
         <org.slf4j.version>2.0.17</org.slf4j.version>
         <org.skyscreamer.version>1.5.3</org.skyscreamer.version>
-        <org.testcontainers.version>1.21.3</org.testcontainers.version>
+        <org.testcontainers.version>2.0.1</org.testcontainers.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -158,8 +158,7 @@
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>1.21.3</version>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -274,8 +273,10 @@
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers</artifactId>
+                <artifactId>testcontainers-bom</artifactId>
                 <version>${org.testcontainers.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
             </dependency>
             <dependency>
                 <groupId>org.skyscreamer</groupId>
