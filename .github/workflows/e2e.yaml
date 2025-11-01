@@ -46,6 +46,7 @@ jobs:
       - name: Run Kafka Connect ${{ matrix.kafka }} E2E Tests with Apache Kafka
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
+          docker compose version
           docker compose -f ${COMPOSE_FILE} pull
           mvn --batch-mode --no-transfer-progress --errors --update-snapshots clean verify -Drevision=$(git describe --tags --always)
 
@@ -72,6 +73,7 @@ jobs:
       - name: Run Confluent Kafka Platform ${{ matrix.kafka }} E2E Tests
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
+          docker compose version
           docker compose -f ${COMPOSE_FILE} pull
           mvn --batch-mode --no-transfer-progress --errors --update-snapshots clean verify -Drevision=$(git describe --tags --always)
 
@@ -100,5 +102,6 @@ jobs:
       - name: Run Kafka Connect ${{ matrix.kafka }} E2E Tests with Redpanda ${{ matrix.redpanda }}
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
+          docker compose version
           docker compose -f ${COMPOSE_FILE} pull
           mvn --batch-mode --no-transfer-progress --errors --update-snapshots clean verify -Drevision=$(git describe --tags --always)

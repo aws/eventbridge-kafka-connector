@@ -36,7 +36,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testcontainers.containers.DockerComposeContainer;
+import org.testcontainers.containers.ComposeContainer;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -64,28 +64,28 @@ public abstract class AbstractEventBridgeSinkConnectorIT {
   private static final String KAFKA_VERSION_ENV = "KAFKA_VERSION";
   private static final String REDPANDA_VERSION_ENV = "REDPANDA_VERSION";
 
-  private static final String CONNECT_SERVICE = "connect_1";
+  private static final String CONNECT_SERVICE = "connect";
   private static final int CONNECT_EXPOSED_SERVICE_PORT = 8083;
 
-  private static final String LOCALSTACK_SERVICE = "localstack_1";
+  private static final String LOCALSTACK_SERVICE = "localstack";
   private static final int LOCALSTACK_EXPOSED_SERVICE_PORT = 4566;
 
   private static final String AWS_ACCESS_KEY_ID = "test";
   private static final String AWS_SECRET_ACCESS_KEY = "test";
 
-  private final String RUNNING_STATE = "RUNNING";
+  private static final String RUNNING_STATE = "RUNNING";
 
-  protected final String TEST_RESOURCE_NAME = "eventbridge-e2e";
+  protected static final String TEST_RESOURCE_NAME = "eventbridge-e2e";
 
-  protected final String TEST_BUCKET_NAME = "test-bucket";
+  protected static final String TEST_BUCKET_NAME = "test-bucket";
 
   private String connectorName = null;
 
   protected static final Logger log =
       LoggerFactory.getLogger(AbstractEventBridgeSinkConnectorIT.class);
 
-  private final DockerComposeContainer<?> environment =
-      new DockerComposeContainer<>("e2e", getComposeFile())
+  private final ComposeContainer environment =
+      new ComposeContainer("e2e", getComposeFile())
           .withLogConsumer("connect", new Slf4jLogConsumer(log).withSeparateOutputStreams())
           .withEnv("AWS_ACCESS_KEY_ID", AWS_ACCESS_KEY_ID)
           .withEnv("AWS_SECRET_ACCESS_KEY", AWS_SECRET_ACCESS_KEY)
