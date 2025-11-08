@@ -33,8 +33,8 @@ services:
       KAFKA_LOG4J_OPTS: -Dlog4j.configuration=file:/mnt/connect-log4j.properties
       # KAFKA_OPTS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
     volumes:
-      - ${PWD}:/mnt
-      - ${PWD}/../target:/opt/connectors/kafka-eventbridge-sink
+      - ${PWD}/e2e:/mnt
+      - ${PWD}/target:/opt/connectors/kafka-eventbridge-sink
     command: ["/bin/bash","-c","env && /opt/kafka/bin/connect-standalone.sh /mnt/connect-standalone.properties"]
 
   localstack:

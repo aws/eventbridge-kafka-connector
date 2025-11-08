@@ -43,6 +43,10 @@ jobs:
           distribution: "temurin"
           java-version: ${{ matrix.java }}
           cache: "maven"
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@364cc21a5de5b1ee4a7f5f9d3fa374ce0ccde746 # v1.2.0
+        with:
+          version: v2.40.3
       - name: Run Kafka Connect ${{ matrix.kafka }} E2E Tests with Apache Kafka
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
@@ -69,6 +73,10 @@ jobs:
           distribution: "temurin"
           java-version: ${{ matrix.java }}
           cache: "maven"
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@364cc21a5de5b1ee4a7f5f9d3fa374ce0ccde746 # v1.2.0
+        with:
+          version: v2.40.3
       - name: Run Confluent Kafka Platform ${{ matrix.kafka }} E2E Tests
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
@@ -97,6 +105,10 @@ jobs:
           distribution: "temurin"
           java-version: ${{ matrix.java }}
           cache: "maven"
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@364cc21a5de5b1ee4a7f5f9d3fa374ce0ccde746 # v1.2.0
+        with:
+          version: v2.40.3
       - name: Run Kafka Connect ${{ matrix.kafka }} E2E Tests with Redpanda ${{ matrix.redpanda }}
         run: |
           echo "Running integration tests with Docker Compose file: ${COMPOSE_FILE}"
