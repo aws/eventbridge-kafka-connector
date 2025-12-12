@@ -1,6 +1,6 @@
 services:
   kafka:
-    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.0}
+    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.1}
     ports:
       - "9092:9092"
     environment:
@@ -20,7 +20,7 @@ services:
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
 
   connect:
-    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.0}
+    image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.1}
     depends_on:
       - kafka
     ports:
@@ -38,6 +38,6 @@ services:
     command: ["/bin/bash","-c","env && /opt/kafka/bin/connect-standalone.sh /mnt/connect-standalone.properties"]
 
   localstack:
-    image: docker.io/localstack/localstack:4.9.2
+    image: docker.io/localstack/localstack:4.12.0
     ports:
       - "4566" # LocalStack Gateway
