@@ -88,7 +88,7 @@ mvn clean package -Drevision=$(git describe --tags --always)
 To execute the integration tests (requires [Docker](https://docker.com/) with [compose](https://github.com/docker/compose) plugin) run:
 
 ```bash
-export KAFKA_VERSION=4.1.0
+export KAFKA_VERSION=4.1.1
 export COMPOSE_FILE=e2e/docker_compose.yaml
 mvn clean verify -Drevision=$(git describe --tags --always)
 ```
