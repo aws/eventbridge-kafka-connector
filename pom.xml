@@ -30,7 +30,7 @@
         <connect.api.version>3.9.1</connect.api.version>
         <equalsverifier.version>4.2</equalsverifier.version>
         <org.apache.commons.version>3.20.0</org.apache.commons.version>
-        <org.assertj.version>3.27.6</org.assertj.version>
+        <org.assertj.version>3.27.7</org.assertj.version>
         <org.awaitility.version>4.3.0</org.awaitility.version>
         <org.hamcrest.version>3.0</org.hamcrest.version>
         <org.jacoco.version>0.8.14</org.jacoco.version>
