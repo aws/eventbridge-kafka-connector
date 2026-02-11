@@ -28,16 +28,16 @@ import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
  * (batch) in which every batch:
  *
  * <ul>
- *   <li>contains at most 10 items with overall size &le; 256Kb according to this <a
+ *   <li>contains at most 10 items with combined request entry size &lt; 1MB according to this <a
  *       href="https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-putevent-size.html">calculation</a>,
  *       or
- *   <li>one item which size is &ge; 256Kb to isolate events exceeding the EventBridge event size
+ *   <li>one item which size is &ge; 1MB to isolate events exceeding the EventBridge event size
  *       limit which are later handled by PutEvents calls e.g., dropping or sending to a dead-letter
  *       topic if configured.
  * </ul>
  *
- * If a batch contains an <code>PutEventsRequestEntry</code> &gt; 256Kb then a log message is
- * emitted with level <code>WARN</code> on logger <code>
+ * If a batch contains an <code>PutEventsRequestEntry</code> &ge; 1MB then a log message is emitted
+ * with level <code>WARN</code> on logger <code>
  * software.amazon.event.kafkaconnector.batch.DefaultEventBridgeBatching</code>.
  *
  * @author Andreas Gebhardt
@@ -108,7 +108,8 @@ public class DefaultEventBridgeBatching implements EventBridgeBatchingStrategy {
 
   static class Accumulator {
 
-    private static final int MAX_BATCH_SIZE_BYTES = 256 * 1024;
+    // EventBridge requires combined request entry size to be strictly less than 1MB.
+    private static final int MAX_BATCH_SIZE_BYTES = 1024 * 1024 - 1;
     private static final int MAX_BATCH_ITEMS = 10;
 
     private final List<List<MappedSinkRecord<PutEventsRequestEntry>>> batches = new ArrayList<>();
