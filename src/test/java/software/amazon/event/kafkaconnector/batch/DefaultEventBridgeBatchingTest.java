@@ -37,6 +37,9 @@ import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
 
 class DefaultEventBridgeBatchingTest {
 
+  private static final int MAX_BATCH_SIZE_BYTES = 1024 * 1024 - 1;
+  private static final int OVERSIZED_BATCH_ITEM_BYTES = MAX_BATCH_SIZE_BYTES + 1;
+
   private static final EventBridgeBatchingStrategy strategy = new DefaultEventBridgeBatching();
 
   private static List<ILoggingEvent> loggingEvents;
@@ -148,14 +151,15 @@ class DefaultEventBridgeBatchingTest {
 
     @ParameterizedTest(name = "of {0} bytes")
     @DisplayName("generated test 'PutEventsRequestEntry' object should have expected size")
-    @ValueSource(ints = {1024, 10 * 1024, 100 * 1024, 256 * 1024})
+    @ValueSource(
+        ints = {1024, 10 * 1024, 100 * 1024, MAX_BATCH_SIZE_BYTES, OVERSIZED_BATCH_ITEM_BYTES})
     public void shouldHaveExpectedSize(int size) {
       assertThat(getSize(createEntryOfByteSize(size, eventBusName("any")))).isEqualTo(size);
     }
   }
 
   @ParameterizedTest(name = "expected batches {1}")
-  @DisplayName("should generate batches either up to 256kb or maximum 10 items")
+  @DisplayName("should generate batches either below 1MB combined size or maximum 10 items")
   @MethodSource("batchingArguments")
   public void shouldGenerateBatches(
       Stream<MappedSinkRecord<PutEventsRequestEntry>> records, Iterable<List<String>> expected) {
@@ -166,7 +170,7 @@ class DefaultEventBridgeBatchingTest {
 
   @ParameterizedTest(name = "with entry sizes {1} and expected batches {2}")
   @DisplayName(
-      "should generate batches with single record for the item wich exceeds maximum size of 256kb")
+      "should generate batches with single record for item which exceeds strict <1MB limit")
   @MethodSource("sizeExceedingBatchingArguments")
   public void shouldGenerateBatchesWithSingleRecord(
       Stream<MappedSinkRecord<PutEventsRequestEntry>> records,
@@ -178,20 +182,35 @@ class DefaultEventBridgeBatchingTest {
   }
 
   @Test
-  @DisplayName("should log WARN message if single record exceeds maximum size of 256kb")
+  @DisplayName("should log WARN message if single record exceeds strict <1MB limit")
   public void shouldLogWarnMessage() {
     var sinkRecord = new SinkRecord("topic", 0, STRING_SCHEMA, "key", null, "", 0);
     final Stream<MappedSinkRecord<PutEventsRequestEntry>> records =
         Stream.of(
             new MappedSinkRecord<>(
-                sinkRecord, createEntryOfByteSize(256 * 1024 + 1, eventBusName("b"))));
+                sinkRecord, createEntryOfByteSize(OVERSIZED_BATCH_ITEM_BYTES, eventBusName("b"))));
 
     assertThat(strategy.apply(records)).isNotEmpty();
     assertThat(loggingEvents)
         .extracting(Object::toString)
         .map(toFixedGitCommitId)
         .contains(
-            "[WARN] [GitCommitId] Item for SinkRecord with topic='topic', partition=0 and offset=0 exceeds EventBridge size limit. Size is 262145 bytes.");
+            "[WARN] [GitCommitId] Item for SinkRecord with topic='topic', partition=0 and offset=0 exceeds EventBridge size limit. Size is 1048576 bytes.");
+  }
+
+  @Test
+  @DisplayName("should treat exactly 1MB entry as exceeding strict <1MB limit")
+  public void shouldTreatOneMegabyteAsExceedingLimit() {
+    var sinkRecord = new SinkRecord("topic", 0, STRING_SCHEMA, "key", null, "", 0);
+    final Stream<MappedSinkRecord<PutEventsRequestEntry>> records =
+        Stream.of(
+            new MappedSinkRecord<>(
+                sinkRecord, createEntryOfByteSize(OVERSIZED_BATCH_ITEM_BYTES, eventBusName("a"))),
+            new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("b"))));
+
+    assertThat(strategy.apply(records))
+        .extracting(it -> it.stream().map(e -> e.getValue().eventBusName()).toList())
+        .containsExactly(List.of("a"), List.of("b"));
   }
 
   @Test
@@ -231,16 +250,19 @@ class DefaultEventBridgeBatchingTest {
             List.of(List.of("a", "a", "a", "a", "a", "a", "a", "a", "a", "a"), List.of("a"))),
         Arguments.of(
             Stream.of(
-                new MappedSinkRecord<>(null, createEntryOfByteSize(255 * 1024, eventBusName("a"))),
+                new MappedSinkRecord<>(
+                    null, createEntryOfByteSize(MAX_BATCH_SIZE_BYTES - 1024, eventBusName("a"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("b"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("c")))),
             List.of(List.of("a", "b"), List.of("c"))),
         Arguments.of(
             Stream.of(
-                new MappedSinkRecord<>(null, createEntryOfByteSize(256 * 1024, eventBusName("a"))),
+                new MappedSinkRecord<>(
+                    null, createEntryOfByteSize(MAX_BATCH_SIZE_BYTES, eventBusName("a"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("b"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("c"))),
-                new MappedSinkRecord<>(null, createEntryOfByteSize(256 * 1024, eventBusName("d")))),
+                new MappedSinkRecord<>(
+                    null, createEntryOfByteSize(MAX_BATCH_SIZE_BYTES, eventBusName("d")))),
             List.of(List.of("a"), List.of("b", "c"), List.of("d"))));
   }
 
@@ -250,7 +272,8 @@ class DefaultEventBridgeBatchingTest {
         Arguments.of(
             Stream.of(
                 new MappedSinkRecord<>(
-                    sinkRecord, createEntryOfByteSize(256 * 1024 + 1, eventBusName("a"))),
+                    sinkRecord,
+                    createEntryOfByteSize(OVERSIZED_BATCH_ITEM_BYTES, eventBusName("a"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("b"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("c")))),
             "✗✓✓",
@@ -259,7 +282,8 @@ class DefaultEventBridgeBatchingTest {
             Stream.of(
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("a"))),
                 new MappedSinkRecord<>(
-                    sinkRecord, createEntryOfByteSize(256 * 1024 + 1, eventBusName("b"))),
+                    sinkRecord,
+                    createEntryOfByteSize(OVERSIZED_BATCH_ITEM_BYTES, eventBusName("b"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("c")))),
             "✓✗✓",
             List.of(List.of("a"), List.of("b"), List.of("c"))),
@@ -268,7 +292,8 @@ class DefaultEventBridgeBatchingTest {
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("a"))),
                 new MappedSinkRecord<>(null, createEntryOfByteSize(1024, eventBusName("b"))),
                 new MappedSinkRecord<>(
-                    sinkRecord, createEntryOfByteSize(256 * 1024 + 1, eventBusName("c")))),
+                    sinkRecord,
+                    createEntryOfByteSize(OVERSIZED_BATCH_ITEM_BYTES, eventBusName("c")))),
             "✓✓✗",
             List.of(List.of("a", "b"), List.of("c"))));
   }

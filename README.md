@@ -323,7 +323,7 @@ The following configuration would return the string `customer.order.created` to 
 ### Offloading large events (payloads) to S3
 
 The current `PutEvents` size [limit](https://docs.aws.amazon.com/eventbridge/latest/APIReference/API_PutEvents.html) in
-EventBridge is 256KB. This can be problematic in cases where Kafka topics contain records exceeding this limit. By
+EventBridge requires the combined request entry size to be less than 1MB. This can be problematic in cases where Kafka topics contain records exceeding this limit. By
 default, the connector logs a warning when trying to send those events to EventBridge which can be ignored (dropped) or
 sent to a Kafka dead-letter topic (see [Payloads exceeding PutEvents Limit](#payloads-exceeding-putevents-limit)).
 
@@ -891,8 +891,8 @@ We recommend to verify your `PutEvents` account quota for the specific AWS
 
 ### Payloads exceeding `PutEvents` Limit
 
-EventBridge has a [limit](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-putevent-size.html) of 256KB on
-the request size used in `PutEvents`. When a Kafka record exceeds this threshold, the connector will log a warning and
+EventBridge has a [limit](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-putevent-size.html) where each
+request entry size used in `PutEvents` must be less than 1MB. When a Kafka record exceeds this threshold, the connector will log a warning and
 ignore (skip) over the record. Optionally, a dead-letter topic can be
 [configured](#json-encoding-with-dead-letter-queue) where such records are sent to or [offloading to
 S3](#configure-offloading) can be enabled.

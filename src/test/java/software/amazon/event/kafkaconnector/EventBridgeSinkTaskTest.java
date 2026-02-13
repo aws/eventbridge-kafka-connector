@@ -165,7 +165,7 @@ public class EventBridgeSinkTaskTest {
             STRING_SCHEMA,
             "key",
             testSchema,
-            new Struct(testSchema).put("id", "#".repeat(1024 * 256)),
+            new Struct(testSchema).put("id", "#".repeat(1024 * 1024)),
             1));
     records.addAll(OfSinkRecord.withIdsIn(rangeClosed(2, 10)));
 
@@ -177,7 +177,8 @@ public class EventBridgeSinkTaskTest {
     assertThat(captor.getAllValues())
         .extracting(fromPutEventsRequestDetail(detail -> detail.get("value").get("id").asText()))
         .containsExactly(
-            List.of("#".repeat(1024 * 256)), List.of("2", "3", "4", "5", "6", "7", "8", "9", "10"));
+            List.of("#".repeat(1024 * 1024)),
+            List.of("2", "3", "4", "5", "6", "7", "8", "9", "10"));
   }
 
   private <T> Function<PutEventsRequest, List<T>> fromPutEventsRequestDetail(
