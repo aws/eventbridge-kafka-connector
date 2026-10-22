@@ -130,6 +130,106 @@ configuration options, this connector defines the following configuration proper
 > for **valid** Kafka records, i.e., records which can be correctly (de)serialized before making a delivery attempt to
 > EventBridge.
 
+### Custom Event Bus (v2)
+
+By default (`aws.eventbridge.api.version=v1`) the connector publishes with the classic `PutEvents` API. Setting
+`aws.eventbridge.api.version=v2` switches publishing to the `PutRawEvents` API of an [EventBridge Custom Event
+Bus](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-custom-bus-what-is.html), which accepts pre-shaped
+payloads (JSON/CloudEvents, Avro, Protobuf, or raw bytes), per-event-group FIFO ordering, and publish-time
+deduplication. The `aws.eventbridge.eventbus.arn` must belong to the `event-busv2` family in v2 mode. v2 mode does not
+support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global.endpoint.id`, or
+`aws.eventbridge.eventbus.resources`.
+
+| Property                                                     | Required (in v2)              | Default                      | Description                                                                                                                                                                                                                                                                              |
+|--------------------------------------------------------------|-------------------------------|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `aws.eventbridge.api.version`                                | No                            | `v1`                         | The publish API: `v1` (classic `PutEvents`) or `v2` (`PutRawEvents` on a Custom Event Bus).                                                                                                                                                                                              |
+| `aws.eventbridge.v2.payload.strategy`                        | **Yes**                       |                              | The v2 payload strategy: `raw` forwards the record value's bytes unchanged; `cloudevents` wraps each record in a CloudEvents 1.0 JSON envelope (reusing the `detail-type` and `time` mapper settings).                                                                                     |
+| `aws.eventbridge.v2.content.type`                            | No                            | `application/octet-stream`   | The `ContentType` set on raw-strategy entries: `application/json`, `application/avro`, `application/protobuf`, or `application/octet-stream`.                                                                                                                                              |
+| `aws.eventbridge.v2.schema.registry.uri`                     | When content type is Avro/Protobuf |                         | The schema registry EventBridge uses to deserialize open-format payloads: an AWS Glue Schema Registry ARN or a Confluent registry HTTPS URL.                                                                                                                                               |
+| `aws.eventbridge.v2.schema.registry.connection.arn`          | For Confluent registries      |                              | The ARN of the EventBridge connection holding Confluent registry credentials.                                                                                                                                                                                                            |
+| `aws.eventbridge.v2.event.group.id`                          | No                            | `topic-partition`            | The `EventGroupId` strategy: `topic-partition` extends Kafka per-partition ordering onto the bus, `record-key` groups by record key, `none` disables grouping.                                                                                                                             |
+| `aws.eventbridge.v2.event.group.id.record.key.ack`           | With `record-key` grouping    | `false`                      | Must be `true` to acknowledge that record-key grouping can create unbounded event group cardinality.                                                                                                                                                                                     |
+| `aws.eventbridge.v2.deduplication.id`                        | No                            | `topic-partition-offset`     | The `DeduplicationId` strategy; the default suppresses retry-induced duplicate publishes within the service deduplication window (300s). `none` disables deduplication.                                                                                                                    |
+
+> [!IMPORTANT]
+> The `raw` strategy requires a byte-preserving converter so the connector sees the original serialized bytes, e.g.
+> `value.converter=org.apache.kafka.connect.converters.ByteArrayConverter` (producers must serialize with the matching
+> registry serializer for Avro/Protobuf so EventBridge can resolve the schema). Records whose value is neither `byte[]`
+> nor `String` fail and are reported as conversion errors. Records with `null` values (tombstones) fail in v2 mode.
+
+#### Example: raw pass-through to a Custom Event Bus
+
+```json5
+{
+    "name": "EventBridgeSink-RawV2",
+    "config": {
+        "auto.offset.reset": "earliest",
+        "connector.class": "software.amazon.event.kafkaconnector.EventBridgeSinkConnector",
+        "topics": "orders",
+        "aws.eventbridge.connector.id": "orders-v2-connector",
+        "aws.eventbridge.eventbus.arn": "arn:aws:events:us-east-1:123456789012:event-busv2/orders/EXAMPLE1234567890abcdef",
+        "aws.eventbridge.region": "us-east-1",
+        "aws.eventbridge.api.version": "v2",
+        "aws.eventbridge.v2.payload.strategy": "raw",
+        "aws.eventbridge.v2.content.type": "application/avro",
+        "aws.eventbridge.v2.schema.registry.uri": "arn:aws:glue:us-east-1:123456789012:registry/orders",
+        "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+        "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter"
+    }
+}
+```
+
+#### v2 behavior differences
+
+- **Tombstones**: records with a `null` value fail in v2 mode (there is no payload to publish) and are sent to the
+  dead-letter queue if one is configured. v1 publishes them with `"value": null` in the event `detail`.
+- **Record metadata**: the v1 `detail` envelope (topic, partition, offset, key) does not exist in v2. Each v2 entry
+  instead carries the `Metadata` keys `kafka.topic`, `kafka.partition`, `kafka.offset`, and `kafka.key` (when the
+  record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters.
+- **CloudEvents strategy**: each record becomes a CloudEvents 1.0 JSON envelope with `source`
+  `kafka-connect.<connector-id>`, `type` from the configured `detail-type` mapping, `id` `<topic>-<partition>-<offset>`,
+  `subject` set to the topic, and `time` from the configured time mapper. Values are carried as JSON `data`, or as
+  `data_base64` when the value is `byte[]`.
+- **Ordering**: with the default `topic-partition` grouping, each Kafka partition maps to one event group, so FIFO
+  subscribers receive events in partition order. Ingestion is limited per event group (1,500 per second, counted as
+  events plus their size in KB), so a topic's throughput scales with its partition count.
+- **Deduplication**: with the default `topic-partition-offset` deduplication id, a record republished within the
+  service deduplication window (300 seconds), e.g. after a retried batch, is suppressed by the bus and reported as
+  `DEDUPLICATED`. The connector treats this as a successful publish. Outside the window, delivery remains
+  *at-least-once*.
+
+#### v2 IAM permissions
+
+The connector's identity needs `events:PutRawEvents` on the target `event-busv2` ARN. Use the `events:` prefix:
+`eventsv2:` actions do not exist and grant nothing. When EventBridge deserializes Avro/Protobuf payloads, it reads the
+schema registry with the connector's credentials:
+
+- **AWS Glue Schema Registry**: `glue:GetSchemaVersion` on the registry and its schemas.
+- **Confluent Schema Registry**: `events:RetrieveConnectionCredentials` on the EventBridge connection, plus
+  `secretsmanager:GetSecretValue` and `secretsmanager:DescribeSecret` on the connection's managed secret (conditioned
+  on `aws:ViaAWSService`), and `kms:Decrypt` if that secret uses a customer managed key.
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": "events:PutRawEvents",
+            "Resource": "arn:aws:events:us-east-1:123456789012:event-busv2/orders/EXAMPLE1234567890abcdef"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "glue:GetSchemaVersion",
+            "Resource": [
+                "arn:aws:glue:us-east-1:123456789012:registry/orders",
+                "arn:aws:glue:us-east-1:123456789012:schema/orders/*"
+            ]
+        }
+    ]
+}
+```
+
 ### Examples
 
 #### JSON Encoding
