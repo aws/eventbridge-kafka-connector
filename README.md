@@ -17,6 +17,10 @@ topic(s) to the specified event bus, including useful features such as:
 - support for [dead-letter
 queues](https://kafka.apache.org/documentation/#sinkconnectorconfigs_errors.deadletterqueue.topic.name)
 - and schema registry support for Avro and Protocol Buffers (Protobuf). 
+- publishing to an EventBridge [Custom Event
+  Bus](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-custom-bus-what-is.html) with the `PutRawEvents` API,
+  including raw pass-through (JSON, Avro, Protobuf, opaque bytes) and CloudEvents payloads, per-partition ordering, and
+  publish-time deduplication (see [Custom Event Bus (v2)](#custom-event-bus-v2))
 
 See [configuration](#configuration) below for details.
 
@@ -614,6 +618,12 @@ their requirements. This is particularly useful for:
   - Change Data Capture (CDC) scenarios where tombstones indicate record deletions
   - Applications that need to track when values are explicitly set to `null`
 
+> [!NOTE]
+> This section describes the classic `PutEvents` path (`aws.eventbridge.api.version=v1`). In
+> [v2 mode](#custom-event-bus-v2) there is no `detail` envelope: tombstones fail and are sent to the dead-letter queue
+> if one is configured (otherwise they are logged and skipped), and record keys are carried in the `kafka.key` entry
+> metadata.
+
 Example EventBridge event structure for `null` keys and tombstone records:
 
 ```json
@@ -674,6 +684,16 @@ considered retryable: `AwsServiceException`, `SdkClientException`, `ExecutionExc
 > certain retryable errors, such as throttling, without immediately throwing an exception. Currently, this can lead to
 > more than the desired retry attempts since those exceptions are also considered retryable by the connector code.
 
+In [v2 mode](#custom-event-bus-v2) (`PutRawEvents`), the same retry settings apply, but errors are classified as
+follows:
+
+| Error | Handling |
+|-------|----------|
+| Per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema) | Only that record fails; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
+| `ThrottlingException`, `SchemaRegistryUnavailableException`, `InternalException`, timeouts | All records in the request are retried. |
+| `InvalidInputException`, `AccessDeniedException`, `ResourceNotFoundException` | Not retried; the task fails, since these indicate a configuration or permission problem. |
+| Per-entry `DEDUPLICATED` result | Treated as a successful publish. |
+
 ### Authentication and Permissions
 
 #### Authentication (IAM Credentials)
@@ -698,7 +718,9 @@ retrieval chain described above.
 
 The connector only requires `events:PutEvents` permission as shown in the IAM policy example below. For details refer to
 the "Managing access permissions to your Amazon EventBridge resources"
-[documentation](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-manage-iam-access.html).
+[documentation](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-manage-iam-access.html). When publishing to a
+Custom Event Bus (`aws.eventbridge.api.version=v2`), the connector requires `events:PutRawEvents` on the `event-busv2`
+ARN instead, plus schema registry access for Avro/Protobuf payloads (see [v2 IAM permissions](#v2-iam-permissions)).
 
 ```json5
 {
@@ -963,6 +985,11 @@ User: arn:aws:sts::1234567890:assumed-role/some/role is not authorized to perfor
 (Service: EventBridge, Status Code: 400, Request ID: e5ed0fb7-535d-4417-b38b-110f8495d0cb)
 ```
 
+In v2 mode, a missing `events:PutRawEvents` permission surfaces as an `AccessDeniedException` and fails the task without
+retries. Check that the policy uses the `events:` prefix: `eventsv2:` actions do not exist and grant nothing. Failures
+reading a schema registry (missing `glue:GetSchemaVersion` or `events:RetrieveConnectionCredentials`) are reported per
+entry as `VALIDATION_ERROR`, and those records are sent to the dead-letter queue if configured.
+
 ### Throttling (API Rate Limiting)
 
 By default, the underlying AWS SDK client used will automatically handle throttle errors (exceptions) when the
@@ -989,6 +1016,13 @@ We recommend to verify your `PutEvents` account quota for the specific AWS
 > is allowed to take up to 5 minutes, i.e., 750 milliseconds per record/event, before considering the consumer (task)
 > failed.
 
+> [!NOTE]
+> On a Custom Event Bus (v2 mode), `PutEvents` and `PutRawEvents` draw from one publish budget per account, and
+> ingestion is additionally limited per event group (1,500 per second, counted as events plus their size in KB). With
+> the default `topic-partition` grouping, each Kafka partition is one event group, so a topic's throughput scales with
+> its partition count. See the Custom Event Bus
+> [quotas](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-quota.html).
+
 ### Payloads exceeding `PutEvents` Limit
 
 EventBridge has a [limit](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-putevent-size.html) where each
@@ -1002,6 +1036,11 @@ S3](#configure-offloading) can be enabled.
 [2023-05-26 09:01:21,149] WARN [EventBridgeSink-Json|task-0] [@69c7029] Dead-letter queue not configured: skipping failed record (software.amazon.event.kafkaconnector.EventBridgeSinkTask:147)
 software.amazon.event.kafkaconnector.exceptions.EventBridgePartialFailureResponse: statusCode=413 errorMessage=EventBridge batch size limit exceeded topic=json-test partition=0 offset=0
 ```
+
+> [!NOTE]
+> This size limit and S3 offloading apply to the classic `PutEvents` path only. In v2 mode, requests are batched by
+> count (up to 100 entries), and an entry the service rejects is reported per entry and sent to the dead-letter queue
+> if configured.
 
 ### Debugging Event Flow (TRACE-level logging)
 

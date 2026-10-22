@@ -384,7 +384,8 @@
                                 from one or multiple Kafka topics to the specified event bus, including useful features
                                 such as configurable topic to event detail-type name mapping, IAM role-based
                                 authentication, support for dead-letter queues, and schema registry support for Avro and
-                                Protocol Buffers (Protobuf).
+                                Protocol Buffers (Protobuf). Also publishes to EventBridge Custom Event Buses via the
+                                PutRawEvents API, with raw and CloudEvents payloads, ordering, and deduplication.
                             </description>
                             <componentTypes>
                                 <componentType>sink</componentType>

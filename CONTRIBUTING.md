@@ -94,8 +94,15 @@ mvn clean verify -Drevision=$(git describe --tags --always)
 ```
 
 > [!NOTE]  
-> If Docker cannot be used, alternative solutions, such as [`Finch`](https://github.com/runfinch/finch) or
-> [`Podman`](https://podman.io/) can be tried (untested).
+> The integration tests use [Testcontainers](https://java.testcontainers.org/), which needs a Docker-API compatible
+> engine it supports, such as Docker Engine, Docker Desktop, Colima, Rancher Desktop, or OrbStack.
+> [`Finch`](https://github.com/runfinch/finch) does not currently work with Testcontainers' compose support.
+
+> [!IMPORTANT]
+> Give the container engine at least 8 GiB of memory: each test class runs Kafka, Kafka Connect, LocalStack, and an
+> `eventsv2` stub together, and with less memory the Connect container can be killed by the kernel's OOM killer. Use
+> Maven 3.9.x, as `kafka-connect-maven-plugin` 0.12.0 fails during `package` under Maven 3.10. See
+> [`e2e/README.md`](e2e/README.md) for details on the v2 (Custom Event Bus) test setup.
 
 #### Running a local Kafka Connect Test Environment
 
@@ -141,6 +148,13 @@ docker compose -f e2e/docker_compose.yaml down --remove-orphans -v && docker com
 
 > [!NOTE]  
 > The Docker Compose environment includes [LocalStack](https://localstack.cloud/) to emulate AWS resources, such as SQS and EventBridge. If you want to use LocalStack use `test` for the access key id and secret environment variable and pass `--endpoint-url=http://localhost:4566` to your `aws` CLI commands.
+
+> [!NOTE]
+> LocalStack does not implement the Custom Event Bus (`eventsv2`) API. The compose environment therefore also runs an
+> `eventsv2-stub` service, built from the test sources (run `mvn package` first so `target/test-classes` exists). A
+> connector configured with `aws.eventbridge.api.version=v2` and
+> `aws.eventbridge.endpoint.uri=http://eventsv2-stub:8080` publishes to it, as in `e2e/connect-config-v2.json`. All
+> services publish their ports to `127.0.0.1` only.
 
 Move on to next section when you see following lines:
 
