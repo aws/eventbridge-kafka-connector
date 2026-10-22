@@ -46,6 +46,16 @@ public class EventBridgeSinkConfig extends AbstractConfig {
       "aws.eventbridge.offloading.default.s3.bucket";
   static final String AWS_OFFLOADING_DEFAULT_FIELDREF =
       "aws.eventbridge.offloading.default.fieldref";
+  static final String AWS_API_VERSION_CONFIG = "aws.eventbridge.api.version";
+  static final String AWS_V2_PAYLOAD_STRATEGY_CONFIG = "aws.eventbridge.v2.payload.strategy";
+  static final String AWS_V2_CONTENT_TYPE_CONFIG = "aws.eventbridge.v2.content.type";
+  static final String AWS_V2_SCHEMA_REGISTRY_URI_CONFIG = "aws.eventbridge.v2.schema.registry.uri";
+  static final String AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG =
+      "aws.eventbridge.v2.schema.registry.connection.arn";
+  static final String AWS_V2_EVENT_GROUP_ID_CONFIG = "aws.eventbridge.v2.event.group.id";
+  static final String AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG =
+      "aws.eventbridge.v2.event.group.id.record.key.ack";
+  static final String AWS_V2_DEDUPLICATION_ID_CONFIG = "aws.eventbridge.v2.deduplication.id";
 
   private static final String AWS_CONNECTOR_ID_DOC =
       "The unique ID of this connector (used in the event source field to uniquely identify a connector).";
@@ -79,6 +89,23 @@ public class EventBridgeSinkConfig extends AbstractConfig {
       S3EventBridgeEventDetailValueOffloading.JSON_PATH_PREFIX;
   public static final String AWS_DETAIL_TYPES_MAPPER_JSON_PATH_MAPPER_FIELDREF =
       "aws.eventbridge.detail.types.jsonpathmapper.fieldref";
+
+  private static final String AWS_API_VERSION_DOC =
+      "The EventBridge publish API to use: 'v1' (classic PutEvents, default) or 'v2' (PutRawEvents on a Custom Event Bus).";
+  private static final String AWS_V2_PAYLOAD_STRATEGY_DOC =
+      "The v2 payload strategy: 'raw' (forward record value bytes unchanged) or 'cloudevents' (wrap each record in a CloudEvents 1.0 JSON envelope). Required when api version is 'v2'.";
+  private static final String AWS_V2_CONTENT_TYPE_DOC =
+      "The SystemMetadata.ContentType set on v2 raw-strategy entries: 'application/json', 'application/avro', 'application/protobuf', or 'application/octet-stream' (default).";
+  private static final String AWS_V2_SCHEMA_REGISTRY_URI_DOC =
+      "The schema registry used by EventBridge to deserialize Avro/Protobuf payloads: an AWS Glue Schema Registry ARN or a Confluent registry HTTPS URL. Required when the content type is 'application/avro' or 'application/protobuf'.";
+  private static final String AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_DOC =
+      "The ARN of the EventBridge connection holding Confluent registry credentials. Required when the registry URI is a Confluent HTTPS URL.";
+  private static final String AWS_V2_EVENT_GROUP_ID_DOC =
+      "The v2 SystemMetadata.EventGroupId strategy: 'topic-partition' (default, extends Kafka per-partition ordering onto the bus), 'none' (no grouping), or 'record-key' (group by record key; requires the acknowledgment flag because keys may have unbounded cardinality).";
+  private static final String AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_DOC =
+      "Acknowledgment that record-key event grouping can create unbounded event group cardinality. Required when 'aws.eventbridge.v2.event.group.id' is 'record-key'.";
+  private static final String AWS_V2_DEDUPLICATION_ID_DOC =
+      "The v2 SystemMetadata.DeduplicationId strategy: 'topic-partition-offset' (default, suppresses retry-induced duplicate publishes within the service deduplication window) or 'none'.";
 
   private static final String AWS_DETAIL_TYPES_MAPPER_CLASS_DEFAULT =
       "software.amazon.event.kafkaconnector.mapping.DefaultDetailTypeMapper";
@@ -122,6 +149,14 @@ public class EventBridgeSinkConfig extends AbstractConfig {
   public String timeMapperClass;
   public String offloadingDefaultS3Bucket;
   public String offloadingDefaultFieldRef;
+  public final String apiVersion;
+  public final String v2PayloadStrategy;
+  public final String v2ContentType;
+  public final String v2SchemaRegistryUri;
+  public final String v2SchemaRegistryConnectionArn;
+  public final String v2EventGroupId;
+  public final boolean v2EventGroupIdRecordKeyAck;
+  public final String v2DeduplicationId;
 
   public EventBridgeSinkConfig(final Map<?, ?> originalProps) {
     super(CONFIG_DEF, originalProps);
@@ -142,6 +177,14 @@ public class EventBridgeSinkConfig extends AbstractConfig {
     this.offloadingDefaultS3EndpointURI = getString(AWS_OFFLOADING_DEFAULT_S3_ENDPOINT_URI);
     this.offloadingDefaultS3Bucket = getString(AWS_OFFLOADING_DEFAULT_S3_BUCKET);
     this.offloadingDefaultFieldRef = getString(AWS_OFFLOADING_DEFAULT_FIELDREF);
+    this.apiVersion = getString(AWS_API_VERSION_CONFIG);
+    this.v2PayloadStrategy = getString(AWS_V2_PAYLOAD_STRATEGY_CONFIG);
+    this.v2ContentType = getString(AWS_V2_CONTENT_TYPE_CONFIG);
+    this.v2SchemaRegistryUri = getString(AWS_V2_SCHEMA_REGISTRY_URI_CONFIG);
+    this.v2SchemaRegistryConnectionArn = getString(AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG);
+    this.v2EventGroupId = getString(AWS_V2_EVENT_GROUP_ID_CONFIG);
+    this.v2EventGroupIdRecordKeyAck = getBoolean(AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG);
+    this.v2DeduplicationId = getString(AWS_V2_DEDUPLICATION_ID_CONFIG);
 
     var detailTypes = getList(AWS_DETAIL_TYPES_CONFIG);
     if (detailTypes.size() > 1 || detailTypes.get(0).contains(":")) {
@@ -157,7 +200,10 @@ public class EventBridgeSinkConfig extends AbstractConfig {
             + "eventBusMaxRetries={} eventBusRetriesDelay={} eventBusResources={} "
             + "eventBusEndpointID={} roleArn={} roleSessionName={} roleExternalID={} "
             + "offloadingDefaultS3EndpointURI={} offloadingDefaultS3Bucket={} offloadingDefaultFieldRef={} "
-            + "detailTypeMapperClass={} timeMapperClass={}",
+            + "detailTypeMapperClass={} timeMapperClass={} "
+            + "apiVersion={} v2PayloadStrategy={} v2ContentType={} "
+            + "v2SchemaRegistryUri={} v2SchemaRegistryConnectionArn={} "
+            + "v2EventGroupId={} v2EventGroupIdRecordKeyAck={} v2DeduplicationId={}",
         connectorId,
         eventBusArn,
         region,
@@ -173,7 +219,15 @@ public class EventBridgeSinkConfig extends AbstractConfig {
         offloadingDefaultS3Bucket,
         offloadingDefaultFieldRef,
         detailTypeMapperClass,
-        timeMapperClass);
+        timeMapperClass,
+        apiVersion,
+        v2PayloadStrategy,
+        v2ContentType,
+        v2SchemaRegistryUri,
+        v2SchemaRegistryConnectionArn,
+        v2EventGroupId,
+        v2EventGroupIdRecordKeyAck,
+        v2DeduplicationId);
   }
 
   private static ConfigDef createConfigDef() {
@@ -265,5 +319,49 @@ public class EventBridgeSinkConfig extends AbstractConfig {
         AWS_OFFLOADING_DEFAULT_FIELDREF_DEFAULT,
         Importance.MEDIUM,
         AWS_OFFLOADING_DEFAULT_FIELDREF_DOC);
+    configDef.define(
+        AWS_API_VERSION_CONFIG, Type.STRING, "v1", Importance.HIGH, AWS_API_VERSION_DOC);
+    configDef.define(
+        AWS_V2_PAYLOAD_STRATEGY_CONFIG,
+        Type.STRING,
+        null,
+        Importance.MEDIUM,
+        AWS_V2_PAYLOAD_STRATEGY_DOC);
+    configDef.define(
+        AWS_V2_CONTENT_TYPE_CONFIG,
+        Type.STRING,
+        "application/octet-stream",
+        Importance.MEDIUM,
+        AWS_V2_CONTENT_TYPE_DOC);
+    configDef.define(
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+        Type.STRING,
+        "",
+        Importance.MEDIUM,
+        AWS_V2_SCHEMA_REGISTRY_URI_DOC);
+    configDef.define(
+        AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+        Type.STRING,
+        "",
+        Importance.MEDIUM,
+        AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_DOC);
+    configDef.define(
+        AWS_V2_EVENT_GROUP_ID_CONFIG,
+        Type.STRING,
+        "topic-partition",
+        Importance.MEDIUM,
+        AWS_V2_EVENT_GROUP_ID_DOC);
+    configDef.define(
+        AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG,
+        Type.BOOLEAN,
+        false,
+        Importance.MEDIUM,
+        AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_DOC);
+    configDef.define(
+        AWS_V2_DEDUPLICATION_ID_CONFIG,
+        Type.STRING,
+        "topic-partition-offset",
+        Importance.MEDIUM,
+        AWS_V2_DEDUPLICATION_ID_DOC);
   }
 }

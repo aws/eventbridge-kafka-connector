@@ -11,6 +11,7 @@ import static software.amazon.awssdk.profiles.ProfileFileSystemSetting.AWS_PROFI
 import static software.amazon.event.kafkaconnector.EventBridgeSinkConfig.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.apache.kafka.common.config.Config;
@@ -34,6 +35,128 @@ public class EventBridgeSinkConfigValidator {
     config.configValues().stream()
         .filter(configValue -> configValue.value() != null)
         .forEach(EventBridgeSinkConfigValidator::validate);
+  }
+
+  /**
+   * Validates the supplied connector properties including cross-field rules which cannot be
+   * expressed on single config values (for example mode and event bus ARN family consistency).
+   *
+   * @param originals the original connector properties as supplied by the user
+   */
+  public static void validate(Config config, Map<String, ?> originals) {
+    validate(config);
+    validateCrossField(originals);
+  }
+
+  private static final List<String> V1_ONLY_CONFIG_KEYS =
+      List.of(
+          AWS_OFFLOADING_DEFAULT_S3_BUCKET,
+          AWS_EVENTBUS_GLOBAL_ENDPOINT_ID_CONFIG,
+          AWS_EVENTBUS_RESOURCES_CONFIG);
+
+  private static final List<String> V2_ONLY_CONFIG_KEYS =
+      List.of(
+          AWS_V2_PAYLOAD_STRATEGY_CONFIG,
+          AWS_V2_CONTENT_TYPE_CONFIG,
+          AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+          AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+          AWS_V2_EVENT_GROUP_ID_CONFIG,
+          AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG,
+          AWS_V2_DEDUPLICATION_ID_CONFIG);
+
+  public static void validateCrossField(Map<String, ?> originals) {
+    if ("v2".equals(stringValue(originals, AWS_API_VERSION_CONFIG))) {
+      validateV2Rules(originals);
+    } else {
+      validateV1Rules(originals);
+    }
+  }
+
+  private static void validateV1Rules(Map<String, ?> originals) {
+    var busArn = stringValue(originals, AWS_EVENTBUS_ARN_CONFIG);
+    if (busArn.contains(":event-busv2/")) {
+      throw new ConfigException(
+          String.format(
+              "key \"%s\" with value \"%s\" belongs to the 'event-busv2' bus family and requires \"%s\" to be \"v2\"",
+              AWS_EVENTBUS_ARN_CONFIG, busArn, AWS_API_VERSION_CONFIG));
+    }
+    var offending = V2_ONLY_CONFIG_KEYS.stream().filter(originals::containsKey).toList();
+    if (!offending.isEmpty()) {
+      throw new ConfigException(
+          String.format(
+              "v2-only setting(s) %s must not be set when \"%s\" is not \"v2\"",
+              offending, AWS_API_VERSION_CONFIG));
+    }
+  }
+
+  private static void validateV2Rules(Map<String, ?> originals) {
+    var busArn = stringValue(originals, AWS_EVENTBUS_ARN_CONFIG);
+    if (!busArn.contains(":event-busv2/")) {
+      throw new ConfigException(
+          String.format(
+              "key \"%s\" with value \"%s\" does not belong to the 'event-busv2' bus family required when \"%s\" is \"v2\"",
+              AWS_EVENTBUS_ARN_CONFIG, busArn, AWS_API_VERSION_CONFIG));
+    }
+    var v1OnlyOffending = V1_ONLY_CONFIG_KEYS.stream().filter(originals::containsKey).toList();
+    if (!v1OnlyOffending.isEmpty()) {
+      throw new ConfigException(
+          String.format(
+              "v1-only setting(s) %s must not be set when \"%s\" is \"v2\"",
+              v1OnlyOffending, AWS_API_VERSION_CONFIG));
+    }
+    if (stringValue(originals, AWS_V2_PAYLOAD_STRATEGY_CONFIG).isBlank()) {
+      throw new ConfigException(
+          String.format(
+              "\"%s\" must be set when \"%s\" is \"v2\"",
+              AWS_V2_PAYLOAD_STRATEGY_CONFIG, AWS_API_VERSION_CONFIG));
+    }
+    if ("record-key".equals(stringValue(originals, AWS_V2_EVENT_GROUP_ID_CONFIG))
+        && !"true"
+            .equalsIgnoreCase(
+                stringValue(originals, AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG))) {
+      throw new ConfigException(
+          String.format(
+              "record-key event grouping can create unbounded event group cardinality; set \"%s\" to \"true\" to acknowledge",
+              AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG));
+    }
+    validateV2SchemaRegistryRules(originals);
+  }
+
+  private static void validateV2SchemaRegistryRules(Map<String, ?> originals) {
+    var contentType = stringValue(originals, AWS_V2_CONTENT_TYPE_CONFIG);
+    var effectiveContentType = contentType.isBlank() ? "application/octet-stream" : contentType;
+    var openFormat =
+        "application/avro".equals(effectiveContentType)
+            || "application/protobuf".equals(effectiveContentType);
+    var registryUri = stringValue(originals, AWS_V2_SCHEMA_REGISTRY_URI_CONFIG);
+    var connectionArn = stringValue(originals, AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG);
+
+    if (openFormat && registryUri.isBlank()) {
+      throw new ConfigException(
+          String.format(
+              "\"%s\" must name a schema registry when \"%s\" is \"%s\" so EventBridge can deserialize the payloads",
+              AWS_V2_SCHEMA_REGISTRY_URI_CONFIG, AWS_V2_CONTENT_TYPE_CONFIG, effectiveContentType));
+    }
+    if (registryUri.startsWith("https://") && connectionArn.isBlank()) {
+      throw new ConfigException(
+          String.format(
+              "\"%s\" must name an EventBridge connection when the Confluent registry \"%s\" is used",
+              AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG, registryUri));
+    }
+    if (!openFormat && (!registryUri.isBlank() || !connectionArn.isBlank())) {
+      throw new ConfigException(
+          String.format(
+              "schema registry settings \"%s\"/\"%s\" are inapplicable when \"%s\" is \"%s\"",
+              AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+              AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+              AWS_V2_CONTENT_TYPE_CONFIG,
+              effectiveContentType));
+    }
+  }
+
+  private static String stringValue(Map<String, ?> originals, String key) {
+    var value = originals.get(key);
+    return value == null ? "" : value.toString();
   }
 
   public static void validate(ConfigValue configValue) {
@@ -123,7 +246,53 @@ public class EventBridgeSinkConfigValidator {
           validateOffloadingDefaultFieldRef(configValue);
           break;
         }
+
+      case AWS_API_VERSION_CONFIG:
+        {
+          validateValueIn(configValue, "v1", "v2");
+          break;
+        }
+
+      case AWS_V2_PAYLOAD_STRATEGY_CONFIG:
+        {
+          validateValueIn(configValue, "raw", "cloudevents");
+          break;
+        }
+
+      case AWS_V2_CONTENT_TYPE_CONFIG:
+        {
+          validateValueIn(
+              configValue,
+              "application/json",
+              "application/avro",
+              "application/protobuf",
+              "application/octet-stream");
+          break;
+        }
+
+      case AWS_V2_EVENT_GROUP_ID_CONFIG:
+        {
+          validateValueIn(configValue, "none", "topic-partition", "record-key");
+          break;
+        }
+
+      case AWS_V2_DEDUPLICATION_ID_CONFIG:
+        {
+          validateValueIn(configValue, "none", "topic-partition-offset");
+          break;
+        }
     }
+  }
+
+  private static void validateValueIn(ConfigValue configValue, String... allowed) {
+    var value = (String) configValue.value();
+    if (List.of(allowed).contains(value)) {
+      return;
+    }
+    throw new ConfigException(
+        String.format(
+            "key \"%s\" with value \"%s\" must be one of %s",
+            configValue.name(), value, List.of(allowed)));
   }
 
   private static void validateConnectorId(ConfigValue configValue) {
@@ -175,8 +344,10 @@ public class EventBridgeSinkConfigValidator {
 
   private static void validateBusArn(ConfigValue configValue) {
     var awsEventBusArn = (String) configValue.value();
-    // example: arn:aws[-partition]:events:region:account:event-bus/bus-name
-    var arnPattern = Pattern.compile("^arn:aws.*:events:\\w+(?:-\\w+)+:\\d{12}:event-bus/.+");
+    // example: arn:aws[-partition]:events:region:account:event-bus/bus-name (classic) or
+    // arn:aws[-partition]:events:region:account:event-busv2/bus-name/bus-id (Custom Event Bus)
+    var arnPattern =
+        Pattern.compile("^arn:aws.*:events:\\w+(?:-\\w+)+:\\d{12}:event-bus(?:v2)?/.+");
     validateValueWithPattern(configValue.name(), awsEventBusArn, arnPattern);
   }
 

@@ -51,7 +51,7 @@ public class EventBridgeSinkConnector extends SinkConnector {
   @Override
   public Config validate(Map<String, String> connectorConfigs) {
     var config = super.validate(connectorConfigs);
-    EventBridgeSinkConfigValidator.validate(config);
+    EventBridgeSinkConfigValidator.validate(config, connectorConfigs);
     return config;
   }
 

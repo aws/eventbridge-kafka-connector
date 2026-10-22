@@ -13,6 +13,7 @@ import static software.amazon.event.kafkaconnector.EventBridgeSinkConfig.*;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigValue;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,289 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 public class EventBridgeSinkConfigValidatorTest {
+
+  private Map<String, Object> v2Props() {
+    var props = new HashMap<String, Object>();
+    props.put(AWS_CONNECTOR_ID_CONFIG, "someId");
+    props.put(AWS_REGION_CONFIG, "eu-central-1");
+    props.put(
+        AWS_EVENTBUS_ARN_CONFIG,
+        "arn:aws:events:eu-central-1:123456789012:event-busv2/my-bus/ABCDEFGHIJKLM1234567890");
+    props.put(AWS_API_VERSION_CONFIG, "v2");
+    props.put(AWS_V2_PAYLOAD_STRATEGY_CONFIG, "raw");
+    return props;
+  }
+
+  @Test
+  public void v2WithClassicBusArnFails() {
+    var props = v2Props();
+    props.put(AWS_EVENTBUS_ARN_CONFIG, "arn:aws:events:eu-central-1:123456789012:event-bus/my-bus");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v2WithV2BusArnPasses() {
+    EventBridgeSinkConfigValidator.validateCrossField(v2Props());
+  }
+
+  @Test
+  public void v1WithV2BusArnFails() {
+    var props = new HashMap<String, Object>();
+    props.put(AWS_CONNECTOR_ID_CONFIG, "someId");
+    props.put(AWS_REGION_CONFIG, "eu-central-1");
+    props.put(
+        AWS_EVENTBUS_ARN_CONFIG,
+        "arn:aws:events:eu-central-1:123456789012:event-busv2/my-bus/ABCDEFGHIJKLM1234567890");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void validV2BusArnPerValue() {
+    var configValue = new ConfigValue(AWS_EVENTBUS_ARN_CONFIG);
+    configValue.value(
+        "arn:aws:events:eu-central-1:123456789012:event-busv2/my-bus/ABCDEFGHIJKLM1234567890");
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        AWS_V2_PAYLOAD_STRATEGY_CONFIG,
+        AWS_V2_CONTENT_TYPE_CONFIG,
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+        AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+        AWS_V2_EVENT_GROUP_ID_CONFIG,
+        AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG,
+        AWS_V2_DEDUPLICATION_ID_CONFIG
+      })
+  public void v2OnlySettingInV1ModeFails(String v2Key) {
+    var props = new HashMap<String, Object>();
+    props.put(AWS_CONNECTOR_ID_CONFIG, "someId");
+    props.put(AWS_REGION_CONFIG, "eu-central-1");
+    props.put(AWS_EVENTBUS_ARN_CONFIG, "arn:aws:events:eu-central-1:123456789012:event-bus/my-bus");
+    props.put(v2Key, "any-value");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"v1", "v2"})
+  public void validApiVersion(String apiVersion) {
+    var configValue = new ConfigValue(AWS_API_VERSION_CONFIG);
+    configValue.value(apiVersion);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidApiVersionFails() {
+    var configValue = new ConfigValue(AWS_API_VERSION_CONFIG);
+    configValue.value("v3");
+
+    assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"raw", "cloudevents"})
+  public void validV2PayloadStrategy(String strategy) {
+    var configValue = new ConfigValue(AWS_V2_PAYLOAD_STRATEGY_CONFIG);
+    configValue.value(strategy);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidV2PayloadStrategyFails() {
+    var configValue = new ConfigValue(AWS_V2_PAYLOAD_STRATEGY_CONFIG);
+    configValue.value("avro");
+
+    assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "application/json",
+        "application/avro",
+        "application/protobuf",
+        "application/octet-stream"
+      })
+  public void validV2ContentType(String contentType) {
+    var configValue = new ConfigValue(AWS_V2_CONTENT_TYPE_CONFIG);
+    configValue.value(contentType);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidV2ContentTypeFails() {
+    var configValue = new ConfigValue(AWS_V2_CONTENT_TYPE_CONFIG);
+    configValue.value("application/xml");
+
+    assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"none", "topic-partition", "record-key"})
+  public void validV2EventGroupId(String groupId) {
+    var configValue = new ConfigValue(AWS_V2_EVENT_GROUP_ID_CONFIG);
+    configValue.value(groupId);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidV2EventGroupIdFails() {
+    var configValue = new ConfigValue(AWS_V2_EVENT_GROUP_ID_CONFIG);
+    configValue.value("partition");
+
+    assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"none", "topic-partition-offset"})
+  public void validV2DeduplicationId(String dedupId) {
+    var configValue = new ConfigValue(AWS_V2_DEDUPLICATION_ID_CONFIG);
+    configValue.value(dedupId);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidV2DeduplicationIdFails() {
+    var configValue = new ConfigValue(AWS_V2_DEDUPLICATION_ID_CONFIG);
+    configValue.value("offset");
+
+    assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @Test
+  public void v2WithoutPayloadStrategyFails() {
+    var props = v2Props();
+    props.remove(AWS_V2_PAYLOAD_STRATEGY_CONFIG);
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"application/avro", "application/protobuf"})
+  public void v2AvroOrProtobufWithoutRegistryUriFails(String contentType) {
+    var props = v2Props();
+    props.put(AWS_V2_CONTENT_TYPE_CONFIG, contentType);
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"application/avro", "application/protobuf"})
+  public void v2AvroOrProtobufWithRegistryUriPasses(String contentType) {
+    var props = v2Props();
+    props.put(AWS_V2_CONTENT_TYPE_CONFIG, contentType);
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+        "arn:aws:glue:eu-central-1:123456789012:registry/orders");
+
+    EventBridgeSinkConfigValidator.validateCrossField(props);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"application/json", "application/octet-stream"})
+  public void v2RegistrySettingsWithOpaqueContentTypeFails(String contentType) {
+    var props = v2Props();
+    props.put(AWS_V2_CONTENT_TYPE_CONFIG, contentType);
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG,
+        "arn:aws:glue:eu-central-1:123456789012:registry/orders");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v2ConnectionArnWithDefaultContentTypeFails() {
+    var props = v2Props();
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+        "arn:aws:events:eu-central-1:123456789012:connection/confluent-registry/abc");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v2ConfluentRegistryWithoutConnectionArnFails() {
+    var props = v2Props();
+    props.put(AWS_V2_CONTENT_TYPE_CONFIG, "application/protobuf");
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG, "https://psrc-example.eu-central-1.aws.confluent.cloud");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v2ConfluentRegistryWithConnectionArnPasses() {
+    var props = v2Props();
+    props.put(AWS_V2_CONTENT_TYPE_CONFIG, "application/protobuf");
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_URI_CONFIG, "https://psrc-example.eu-central-1.aws.confluent.cloud");
+    props.put(
+        AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
+        "arn:aws:events:eu-central-1:123456789012:connection/confluent-registry/abc");
+
+    EventBridgeSinkConfigValidator.validateCrossField(props);
+  }
+
+  @Test
+  public void v2RecordKeyGroupingWithoutAckFails() {
+    var props = v2Props();
+    props.put(AWS_V2_EVENT_GROUP_ID_CONFIG, "record-key");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v2RecordKeyGroupingWithAckPasses() {
+    var props = v2Props();
+    props.put(AWS_V2_EVENT_GROUP_ID_CONFIG, "record-key");
+    props.put(AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG, true);
+
+    EventBridgeSinkConfigValidator.validateCrossField(props);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        AWS_OFFLOADING_DEFAULT_S3_BUCKET,
+        AWS_EVENTBUS_GLOBAL_ENDPOINT_ID_CONFIG,
+        AWS_EVENTBUS_RESOURCES_CONFIG
+      })
+  public void v2WithV1OnlySettingFails(String v1OnlyKey) {
+    var props = v2Props();
+    props.put(v1OnlyKey, "any-value");
+
+    assertThrows(
+        ConfigException.class, () -> EventBridgeSinkConfigValidator.validateCrossField(props));
+  }
+
+  @Test
+  public void v1WithoutV2SettingsPasses() {
+    var props = new HashMap<String, Object>();
+    props.put(AWS_CONNECTOR_ID_CONFIG, "someId");
+    props.put(AWS_REGION_CONFIG, "eu-central-1");
+    props.put(AWS_EVENTBUS_ARN_CONFIG, "arn:aws:events:eu-central-1:123456789012:event-bus/my-bus");
+
+    EventBridgeSinkConfigValidator.validateCrossField(props);
+  }
 
   @Test
   public void validID() {
