@@ -70,6 +70,9 @@ public abstract class AbstractEventBridgeSinkConnectorIT {
   private static final String LOCALSTACK_SERVICE = "localstack";
   private static final int LOCALSTACK_EXPOSED_SERVICE_PORT = 4566;
 
+  private static final String EVENTSV2_STUB_SERVICE = "eventsv2-stub";
+  private static final int EVENTSV2_STUB_EXPOSED_SERVICE_PORT = 8080;
+
   private static final String AWS_ACCESS_KEY_ID = "test";
   private static final String AWS_SECRET_ACCESS_KEY = "test";
 
@@ -96,7 +99,11 @@ public abstract class AbstractEventBridgeSinkConnectorIT {
           .withExposedService(
               LOCALSTACK_SERVICE,
               LOCALSTACK_EXPOSED_SERVICE_PORT,
-              Wait.forHttp("/_localstack/health"));
+              Wait.forHttp("/_localstack/health"))
+          .withExposedService(
+              EVENTSV2_STUB_SERVICE,
+              EVENTSV2_STUB_EXPOSED_SERVICE_PORT,
+              Wait.forHttp("/_stub/health"));
 
   protected HttpClient httpClient = newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
 
@@ -326,6 +333,12 @@ public abstract class AbstractEventBridgeSinkConnectorIT {
 
   private URI buildKafkaConnectURI(String path) {
     var port = environment.getServicePort(CONNECT_SERVICE, CONNECT_EXPOSED_SERVICE_PORT);
+    return URI.create("http://localhost:" + port + path);
+  }
+
+  protected URI eventsV2StubUri(String path) {
+    var port =
+        environment.getServicePort(EVENTSV2_STUB_SERVICE, EVENTSV2_STUB_EXPOSED_SERVICE_PORT);
     return URI.create("http://localhost:" + port + path);
   }
 

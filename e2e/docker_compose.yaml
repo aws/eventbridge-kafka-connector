@@ -2,7 +2,7 @@ services:
   kafka:
     image: docker.io/apache/kafka:${KAFKA_VERSION:-4.1.1}
     ports:
-      - "9092:9092"
+      - "127.0.0.1:9092:9092"
     environment:
       KAFKA_NODE_ID: 1
       CLUSTER_ID: 1
@@ -24,7 +24,7 @@ services:
     depends_on:
       - kafka
     ports:
-      - "8083"
+      - "127.0.0.1::8083"
       # - "5005:5005"
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -40,4 +40,18 @@ services:
   localstack:
     image: docker.io/localstack/localstack:4.12.0
     ports:
-      - "4566" # LocalStack Gateway
+      - "127.0.0.1::4566" # LocalStack Gateway
+
+  # Test stub of the EventBridge Custom Event Bus (eventsv2) PutRawEvents API, run from compiled test
+  # classes. Unauthenticated: binds 0.0.0.0 only inside the compose network; the host publish is
+  # loopback-only.
+  eventsv2-stub:
+    image: docker.io/library/eclipse-temurin:17-jre
+    environment:
+      STUB_BIND: "0.0.0.0"
+      STUB_PORT: "8080"
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - ${PWD}/target/test-classes:/stub:ro
+    command: ["java", "-cp", "/stub", "software.amazon.event.kafkaconnector.stub.EventsV2Stub"]
