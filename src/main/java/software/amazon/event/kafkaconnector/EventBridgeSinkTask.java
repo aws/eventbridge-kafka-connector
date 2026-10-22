@@ -29,7 +29,7 @@ import software.amazon.event.kafkaconnector.util.StatusReporter;
 public class EventBridgeSinkTask extends SinkTask {
 
   private final Logger log = ContextAwareLoggerFactory.getLogger(EventBridgeSinkTask.class);
-  private EventBridgeWriter eventBridgeWriter;
+  private EventBridgeSinkWriter eventBridgeWriter;
   private ErrantRecordReporter dlq;
   private EventBridgeSinkConfig config;
   private final StatusReporter statusReporter = new StatusReporter(1, TimeUnit.MINUTES);
@@ -55,7 +55,9 @@ public class EventBridgeSinkTask extends SinkTask {
   }
 
   void startInternal(
-      EventBridgeSinkConfig config, EventBridgeWriter eventBridgeWriter, ErrantRecordReporter dlq) {
+      EventBridgeSinkConfig config,
+      EventBridgeSinkWriter eventBridgeWriter,
+      ErrantRecordReporter dlq) {
     this.config = config;
     this.eventBridgeWriter = eventBridgeWriter;
     this.dlq = dlq;
@@ -168,7 +170,7 @@ public class EventBridgeSinkTask extends SinkTask {
   public void stop() {
     log.trace("Stopping sink task");
     if (eventBridgeWriter != null) {
-      eventBridgeWriter.shutDownEventBridgeClient();
+      eventBridgeWriter.shutdown();
     }
 
     if (statusReporter.isRunning()) {
