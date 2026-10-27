@@ -52,7 +52,7 @@ import software.amazon.event.kafkaconnector.util.EventBridgeEventId;
 import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
 import software.amazon.event.kafkaconnector.util.PropertiesUtil;
 
-public class EventBridgeWriter {
+public class EventBridgeWriter implements EventBridgeSinkWriter {
 
   private static final int SDK_TIMEOUT = 5000; // timeout in milliseconds for SDK calls
   private static final Logger log = ContextAwareLoggerFactory.getLogger(EventBridgeWriter.class);
@@ -239,7 +239,8 @@ public class EventBridgeWriter {
     }
   }
 
-  public void shutDownEventBridgeClient() {
+  @Override
+  public void shutdown() {
     ebClient.close();
   }
 

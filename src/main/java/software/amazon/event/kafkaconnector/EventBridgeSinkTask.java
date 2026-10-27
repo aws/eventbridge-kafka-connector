@@ -29,7 +29,7 @@ import software.amazon.event.kafkaconnector.util.StatusReporter;
 public class EventBridgeSinkTask extends SinkTask {
 
   private final Logger log = ContextAwareLoggerFactory.getLogger(EventBridgeSinkTask.class);
-  private EventBridgeWriter eventBridgeWriter;
+  private EventBridgeSinkWriter eventBridgeWriter;
   private ErrantRecordReporter dlq;
   private EventBridgeSinkConfig config;
   private final StatusReporter statusReporter = new StatusReporter(1, TimeUnit.MINUTES);
@@ -39,7 +39,7 @@ public class EventBridgeSinkTask extends SinkTask {
     log.info("Starting Kafka Connect task for EventBridgeSinkConnector");
 
     var config = new EventBridgeSinkConfig(properties);
-    var eventBridgeWriter = new EventBridgeWriter(config);
+    var eventBridgeWriter = createWriter(properties);
 
     ErrantRecordReporter dlq;
     try {
@@ -54,8 +54,24 @@ public class EventBridgeSinkTask extends SinkTask {
     startInternal(config, eventBridgeWriter, dlq);
   }
 
+  /**
+   * Creates the publish writer for the configured EventBridge API version. Cross-field validation
+   * runs here as well so inconsistent configurations fail at task startup even when the connector
+   * validate endpoint was bypassed.
+   */
+  static EventBridgeSinkWriter createWriter(Map<String, String> properties) {
+    EventBridgeSinkConfigValidator.validateCrossField(properties);
+    var config = new EventBridgeSinkConfig(properties);
+    if ("v2".equals(config.apiVersion)) {
+      return new EventBridgeV2Writer(EventBridgeV2ClientFactory.create(config), config);
+    }
+    return new EventBridgeWriter(config);
+  }
+
   void startInternal(
-      EventBridgeSinkConfig config, EventBridgeWriter eventBridgeWriter, ErrantRecordReporter dlq) {
+      EventBridgeSinkConfig config,
+      EventBridgeSinkWriter eventBridgeWriter,
+      ErrantRecordReporter dlq) {
     this.config = config;
     this.eventBridgeWriter = eventBridgeWriter;
     this.dlq = dlq;
@@ -168,7 +184,7 @@ public class EventBridgeSinkTask extends SinkTask {
   public void stop() {
     log.trace("Stopping sink task");
     if (eventBridgeWriter != null) {
-      eventBridgeWriter.shutDownEventBridgeClient();
+      eventBridgeWriter.shutdown();
     }
 
     if (statusReporter.isRunning()) {

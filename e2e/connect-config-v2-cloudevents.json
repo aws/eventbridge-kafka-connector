@@ -1,0 +1,17 @@
+{
+    "name": "eventbridge-e2e-v2-cloudevents",
+    "config": {
+        "auto.offset.reset": "earliest",
+        "connector.class": "software.amazon.event.kafkaconnector.EventBridgeSinkConnector",
+        "topics": "eventbridge-e2e-v2-cloudevents",
+        "aws.eventbridge.connector.id": "eventbridge-e2e-v2-cloudevents-connector",
+        "aws.eventbridge.eventbus.arn": "arn:aws:events:us-east-1:000000000000:event-busv2/eventbridge-e2e/abcdefghijklmnopqrstuvwxy",
+        "aws.eventbridge.region": "us-east-1",
+        "aws.eventbridge.endpoint.uri": "http://eventsv2-stub:8080",
+        "aws.eventbridge.api.version": "v2",
+        "aws.eventbridge.v2.payload.strategy": "cloudevents",
+        "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": false
+    }
+}

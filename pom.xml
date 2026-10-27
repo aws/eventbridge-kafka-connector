@@ -19,7 +19,7 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <aws.java.sdk.version>2.50.1</aws.java.sdk.version>
+        <aws.java.sdk.version>2.55.5</aws.java.sdk.version>
         <aws.schema.registry.version>1.1.15</aws.schema.registry.version>
         <ch.qos.logback.version>1.6.1</ch.qos.logback.version>
         <com.fasterxml.jackson.version>2.21.3</com.fasterxml.jackson.version>
@@ -28,6 +28,7 @@
         <commons-codec.version>1.22.1</commons-codec.version>
         <commons-logging.version>1.4.0</commons-logging.version>
         <connect.api.version>3.9.2</connect.api.version>
+        <io.cloudevents.version>5.1.0</io.cloudevents.version>
         <equalsverifier.version>4.2</equalsverifier.version>
         <org.apache.commons.version>3.20.0</org.apache.commons.version>
         <org.assertj.version>3.27.7</org.assertj.version>
@@ -56,6 +57,14 @@
             <groupId>com.jayway.jsonpath</groupId>
             <artifactId>json-path-assert</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.cloudevents</groupId>
+            <artifactId>cloudevents-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.cloudevents</groupId>
+            <artifactId>cloudevents-json-jackson</artifactId>
         </dependency>
         <dependency>
             <groupId>nl.jqno.equalsverifier</groupId>
@@ -140,6 +149,20 @@
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
+            <artifactId>eventbridgev2</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
         </dependency>
         <dependency>
@@ -201,6 +224,16 @@
                 <groupId>commons-logging</groupId>
                 <artifactId>commons-logging</artifactId>
                 <version>${commons-logging.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.cloudevents</groupId>
+                <artifactId>cloudevents-core</artifactId>
+                <version>${io.cloudevents.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.cloudevents</groupId>
+                <artifactId>cloudevents-json-jackson</artifactId>
+                <version>${io.cloudevents.version}</version>
             </dependency>
             <dependency>
                 <groupId>nl.jqno.equalsverifier</groupId>
@@ -342,7 +375,8 @@
                                 from one or multiple Kafka topics to the specified event bus, including useful features
                                 such as configurable topic to event detail-type name mapping, IAM role-based
                                 authentication, support for dead-letter queues, and schema registry support for Avro and
-                                Protocol Buffers (Protobuf).
+                                Protocol Buffers (Protobuf). Also publishes to EventBridge Custom Event Buses via the
+                                PutRawEvents API, with raw and CloudEvents payloads, ordering, and deduplication.
                             </description>
                             <componentTypes>
                                 <componentType>sink</componentType>
@@ -521,4 +555,31 @@
         <connection>scm:git:git://github.com/aws/eventbridge-kafka-connector.git</connection>
         <developerConnection>scm:git:ssh://github.com/aws/eventbridge-kafka-connector.git</developerConnection>
     </scm>
+    <profiles>
+        <profile>
+            <id>google-java-format-jdk21-plus</id>
+            <activation>
+                <jdk>[21,)</jdk>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.spotify.fmt</groupId>
+                        <artifactId>fmt-maven-plugin</artifactId>
+                        <version>2.29</version>
+                        <dependencies>
+                            <!-- The plugin-bundled google-java-format 1.28.0 fails on
+                                 JDK 27+ (NoSuchFieldError on javac internals); 1.37.0
+                                 requires JDK 21+ to run, so it is only pinned here. -->
+                            <dependency>
+                                <groupId>com.google.googlejavaformat</groupId>
+                                <artifactId>google-java-format</artifactId>
+                                <version>1.37.0</version>
+                            </dependency>
+                        </dependencies>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
