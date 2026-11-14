@@ -472,6 +472,56 @@ public class EventBridgeSinkTaskTest {
     assertThat(task.counters().published()).isZero();
   }
 
+  @Test
+  @DisplayName("v2: a group's records are stored in offset order when one is throttled once")
+  public void v2GroupOrderIsKeptWhenARecordIsThrottledOnce() {
+    var v2Client = org.mockito.Mockito.mock(EventBridgeV2AsyncClient.class);
+    var accepted = new ArrayList<Long>();
+    var sentAfterLaterAccepted = new ArrayList<Long>();
+    var throttledOnce = new java.util.concurrent.atomic.AtomicBoolean(false);
+    when(v2Client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              PutRawEventsRequest request = invocation.getArgument(0);
+              var entries = new ArrayList<PutRawEventsResultEntry>();
+              for (var entry : request.entries()) {
+                var offset = Long.parseLong(entry.metadata().get("kafka.offset"));
+                if (accepted.stream().anyMatch(a -> a > offset)) {
+                  sentAfterLaterAccepted.add(offset);
+                }
+                if (offset == 3 && throttledOnce.compareAndSet(false, true)) {
+                  entries.add(v2Throttled());
+                } else {
+                  accepted.add(offset);
+                  entries.add(v2Published());
+                }
+              }
+              return completedFuture(PutRawEventsResponse.builder().entries(entries).build());
+            });
+    var config = v2Config();
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, new EventBridgeV2Writer(v2Client, config), dlq);
+    // sizes give requests [A,B], [C], [D,E]: C starts the second request
+    var kb = 1024;
+    var records =
+        List.of(
+            v2Sized(1, 400 * kb), // A
+            v2Sized(2, 400 * kb), // B
+            v2Sized(3, 700 * kb), // C
+            v2Sized(4, 400 * kb), // D
+            v2Sized(5, 400 * kb)); // E
+
+    task.put(records);
+
+    assertThat(accepted).containsExactly(1L, 2L, 3L, 4L, 5L);
+    assertThat(sentAfterLaterAccepted).isEmpty();
+    org.mockito.Mockito.verifyNoInteractions(dlq);
+  }
+
+  private static SinkRecord v2Sized(long offset, int bytes) {
+    return new SinkRecord("orders", 0, null, null, null, new byte[bytes], offset);
+  }
+
   private <T> Function<PutEventsRequest, List<T>> fromPutEventsRequestDetail(
       Function<JsonNode, T> f) {
     return (PutEventsRequest request) ->

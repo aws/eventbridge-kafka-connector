@@ -14,6 +14,7 @@ import static software.amazon.event.kafkaconnector.EventBridgeResult.failure;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -88,10 +89,62 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
       }
     }
 
+    var blocked = new HashSet<String>();
     for (var batch : batching.apply(mapped)) {
-      results.addAll(send(batch));
+      results.addAll(sendHoldingBackBlockedGroups(batch, blocked));
     }
     return results;
+  }
+
+  /**
+   * Sends the entries of {@code batch} whose event group is not blocked, and fails the others with
+   * retry so that a group's records are retried after its earlier failed record, in their original
+   * order. A record that comes back with a retryable failure blocks its group for the rest of the
+   * call. Results are in batch order.
+   */
+  private List<EventBridgeResult<String>> sendHoldingBackBlockedGroups(
+      List<MappedSinkRecord<PutRawEventsRequestEntry>> batch, Set<String> blocked) {
+    var held = new boolean[batch.size()];
+    var toSend = new ArrayList<MappedSinkRecord<PutRawEventsRequestEntry>>();
+    for (int i = 0; i < batch.size(); i++) {
+      var group = groupOf(batch.get(i));
+      held[i] = group != null && blocked.contains(group);
+      if (!held[i]) {
+        toSend.add(batch.get(i));
+      }
+    }
+    var sent = (toSend.isEmpty() ? List.<EventBridgeResult<String>>of() : send(toSend)).iterator();
+
+    var results = new ArrayList<EventBridgeResult<String>>();
+    for (int i = 0; i < batch.size(); i++) {
+      var item = batch.get(i);
+      var group = groupOf(item);
+      if (held[i]) {
+        results.add(failure(item.getSinkRecord(), heldBack(group)));
+        continue;
+      }
+      var result = sent.next();
+      if (group != null && isRetry(result)) {
+        blocked.add(group);
+      }
+      results.add(result);
+    }
+    return results;
+  }
+
+  private static EventBridgeResult.Error heldBack(String group) {
+    return retry(
+        new RetriableException("held behind an earlier retryable failure in event group " + group));
+  }
+
+  private static boolean isRetry(EventBridgeResult<?> result) {
+    return result.isFailure()
+        && result.failure().getValue().getType() == EventBridgeResult.ErrorType.RETRY;
+  }
+
+  private static String groupOf(MappedSinkRecord<PutRawEventsRequestEntry> item) {
+    var systemMetadata = item.getValue().systemMetadata();
+    return systemMetadata == null ? null : systemMetadata.eventGroupId();
   }
 
   private List<EventBridgeResult<String>> send(

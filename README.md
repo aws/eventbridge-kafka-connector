@@ -210,7 +210,13 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   `data_base64` when the value is `byte[]`.
 - **Ordering**: with the default `topic-partition` grouping, each Kafka partition maps to one event group, so FIFO
   subscribers receive events in partition order. Ingestion is limited per event group (1,500 per second, counted as
-  events plus their size in KB), so a topic's throughput scales with its partition count.
+  events plus their size in KB), so a topic's throughput scales with its partition count. When a record fails with a
+  retryable error, the connector stops sending later records of the same event group for the rest of that flush and
+  retries them after the failed record, in their original order. Records of other event groups are not held back.
+  One case is not covered: if a later record of the group was in the same request as the failed record and the bus
+  accepted it, that record is already stored ahead of the failed one. The connector leaves it published rather than
+  sending it again, which would store a duplicate when deduplication is off. Strict order within a group holds except
+  in this case.
 - **Deduplication**: with the default `topic-partition-offset` deduplication id, a record republished within the
   service deduplication window (300 seconds), e.g. after a retried batch, is suppressed by the bus and reported as
   `DEDUPLICATED`. The connector treats this as a successful publish and counts it as `deduplicated`, not `published`,

@@ -7,6 +7,7 @@ package software.amazon.event.kafkaconnector;
 import static java.util.concurrent.CompletableFuture.completedFuture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -172,6 +173,158 @@ public class EventBridgeV2WriterTest {
         .errorCode(code)
         .errorMessage(code + " message")
         .build();
+  }
+
+  private static SinkRecord record(int partition, long offset) {
+    return new SinkRecord("orders", partition, null, null, null, new byte[] {1}, offset);
+  }
+
+  private static List<SinkRecord> records(int partition, int fromOffset, int count) {
+    return java.util.stream.IntStream.range(fromOffset, fromOffset + count)
+        .mapToObj(o -> record(partition, o))
+        .toList();
+  }
+
+  /** Answers each request entry by its Kafka partition and offset. */
+  private void respond(
+      java.util.function.BiFunction<Integer, Long, PutRawEventsResultEntry> byRecord) {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              PutRawEventsRequest request = invocation.getArgument(0);
+              return completedFuture(
+                  PutRawEventsResponse.builder()
+                      .entries(
+                          request.entries().stream()
+                              .map(
+                                  e ->
+                                      byRecord.apply(
+                                          Integer.parseInt(e.metadata().get("kafka.partition")),
+                                          Long.parseLong(e.metadata().get("kafka.offset"))))
+                              .toList())
+                      .build());
+            });
+  }
+
+  private static List<String> sent(List<PutRawEventsRequest> requests) {
+    return requests.stream()
+        .flatMap(r -> r.entries().stream())
+        .map(e -> e.metadata().get("kafka.partition") + ":" + e.metadata().get("kafka.offset"))
+        .toList();
+  }
+
+  private static List<String> retried(List<? extends EventBridgeResult<?>> results) {
+    return results.stream()
+        .filter(EventBridgeResult::isFailure)
+        .filter(r -> r.failure().getValue().getType() == EventBridgeResult.ErrorType.RETRY)
+        .map(r -> r.failure().getSinkRecord())
+        .map(r -> r.kafkaPartition() + ":" + r.kafkaOffset())
+        .toList();
+  }
+
+  private static List<String> range(int partition, int from, int toExclusive) {
+    return java.util.stream.IntStream.range(from, toExclusive)
+        .mapToObj(o -> partition + ":" + o)
+        .toList();
+  }
+
+  private List<PutRawEventsRequest> capturedRequests() {
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(client, org.mockito.Mockito.atLeastOnce()).putRawEvents(captor.capture());
+    return captor.getAllValues();
+  }
+
+  @Test
+  void laterRecordsOfAThrottledGroupAreHeldBackInInputOrder() {
+    respond((p, o) -> o == 50 ? failed("ThrottlingException") : published("evt"));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(records(0, 0, 150));
+
+    assertThat(sent(capturedRequests())).containsExactlyElementsOf(range(0, 0, 100));
+    var expected = new java.util.ArrayList<>(List.of("0:50"));
+    expected.addAll(range(0, 100, 150));
+    assertThat(retried(results)).containsExactlyElementsOf(expected);
+  }
+
+  @Test
+  void otherGroupsInALaterRequestAreStillSent() {
+    respond((p, o) -> p == 0 && o == 50 ? failed("ThrottlingException") : published("evt"));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+    var input = new java.util.ArrayList<>(records(0, 0, 100));
+    for (int i = 0; i < 25; i++) {
+      input.add(record(1, i));
+      input.add(record(0, 100 + i));
+    }
+
+    var results = writer.putItems(input);
+
+    var requests = capturedRequests();
+    assertThat(requests).hasSize(2);
+    assertThat(sent(List.of(requests.get(1)))).containsExactlyElementsOf(range(1, 0, 25));
+    var expected = new java.util.ArrayList<>(List.of("0:50"));
+    expected.addAll(range(0, 100, 125));
+    assertThat(retried(results)).containsExactlyElementsOf(expected);
+  }
+
+  @Test
+  void requestLevelThrottlingHoldsBackItsGroupsInLaterRequests() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            java.util.concurrent.CompletableFuture.failedFuture(
+                software.amazon.awssdk.services.eventbridgev2.model.ThrottlingException.builder()
+                    .message("slow down")
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(records(0, 0, 150));
+
+    verify(client, times(1)).putRawEvents(any(PutRawEventsRequest.class));
+    assertThat(retried(results)).containsExactlyElementsOf(range(0, 0, 150));
+  }
+
+  @Test
+  void reportOnlyFailureDoesNotBlockItsGroup() {
+    respond((p, o) -> o == 50 ? failed("VALIDATION_ERROR") : published("evt"));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(records(0, 0, 150));
+
+    assertThat(sent(capturedRequests())).containsExactlyElementsOf(range(0, 0, 150));
+    assertThat(retried(results)).isEmpty();
+  }
+
+  @Test
+  void groupingNoneNeverHoldsRecordsBack() {
+    respond((p, o) -> o == 50 ? failed("ThrottlingException") : published("evt"));
+    var writer =
+        new EventBridgeV2Writer(
+            client, configWith(Map.of("aws.eventbridge.v2.event.group.id", "none")));
+
+    var results = writer.putItems(records(0, 0, 150));
+
+    assertThat(sent(capturedRequests())).containsExactlyElementsOf(range(0, 0, 150));
+    assertThat(retried(results)).containsExactly("0:50");
+  }
+
+  @Test
+  void laterRecordAcceptedInTheSameRequestStaysPublishedAndIsNotResent() {
+    // B (offset 2) is throttled; C (offset 3) of the same group in the same request is accepted
+    respond((p, o) -> o == 2 ? failed("ThrottlingException") : published("evt-" + o));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(records(0, 1, 3));
+
+    assertThat(capturedRequests()).hasSize(1);
+    assertThat(retried(results)).containsExactly("0:2");
+    var c = results.stream().filter(r -> offsetOf(r) == 3).findFirst().orElseThrow();
+    assertThat(c.isSuccess()).isTrue();
+  }
+
+  private static long offsetOf(EventBridgeResult<?> result) {
+    return result.isSuccess()
+        ? result.success().getSinkRecord().kafkaOffset()
+        : result.failure().getSinkRecord().kafkaOffset();
   }
 
   @Test
