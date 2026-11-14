@@ -167,6 +167,72 @@ public class EventBridgeV2WriterTest {
         .containsExactly("1", "3");
   }
 
+  private static PutRawEventsResultEntry failed(String code) {
+    return PutRawEventsResultEntry.builder()
+        .errorCode(code)
+        .errorMessage(code + " message")
+        .build();
+  }
+
+  @Test
+  void perEntryThrottlingIsRetriedAndSiblingsStaySuccessful() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(1)
+                    .entries(published("evt-1"), failed("ThrottlingException"), published("evt-3"))
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1), record(2), record(3)));
+
+    assertThat(results).filteredOn(EventBridgeResult::isSuccess).hasSize(2);
+    var failure = results.stream().filter(EventBridgeResult::isFailure).findFirst().orElseThrow();
+    assertThat(failure.failure().getSinkRecord().kafkaOffset()).isEqualTo(2);
+    assertThat(failure.failure().getValue().getType()).isEqualTo(EventBridgeResult.ErrorType.RETRY);
+  }
+
+  @Test
+  void perEntryInternalErrorIsRetried() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(1)
+                    .entries(failed("InternalError"))
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1)));
+
+    assertThat(results.get(0).failure().getValue().getType())
+        .isEqualTo(EventBridgeResult.ErrorType.RETRY);
+  }
+
+  @Test
+  void unrecognizedOrDifferentlyCasedCodeIsReportOnlyWithCodeAndMessage() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(2)
+                    .entries(failed("SomethingNew"), failed("throttlingexception"))
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1), record(2)));
+
+    assertThat(results)
+        .allSatisfy(
+            r ->
+                assertThat(r.failure().getValue().getType())
+                    .isEqualTo(EventBridgeResult.ErrorType.REPORT_ONLY));
+    assertThat(results.get(0).failure().getValue().getMessage())
+        .contains("SomethingNew")
+        .contains("SomethingNew message");
+  }
+
   @Test
   void perEntryErrorIsReportOnlyAndDoesNotAffectSiblingsIncludingDeduplicated() {
     when(client.putRawEvents(any(PutRawEventsRequest.class)))

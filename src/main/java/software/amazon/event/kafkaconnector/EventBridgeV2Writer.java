@@ -15,9 +15,11 @@ import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
+import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import software.amazon.awssdk.services.eventbridgev2.EventBridgeV2AsyncClient;
 import software.amazon.awssdk.services.eventbridgev2.model.AccessDeniedException;
@@ -38,9 +40,11 @@ import software.amazon.event.kafkaconnector.util.PublishCounters;
 /**
  * Publishes Kafka records to an EventBridge Custom Event Bus via PutRawEvents.
  *
- * <p>Error mapping: per-entry error codes are report-only; configuration errors (invalid input,
- * access denied, resource not found) panic; all other request-level failures, including throttling,
- * schema registry unavailability, internal errors, and timeouts, are retried.
+ * <p>Error mapping: per-entry {@code ThrottlingException} and {@code InternalError} are retried;
+ * other per-entry error codes are report-only; configuration errors (invalid input, access denied,
+ * resource not found) panic; all other request-level failures, including throttling, schema
+ * registry unavailability, internal errors, and timeouts, are retried. Entries over the 1 MiB
+ * request limit are reported without being sent.
  */
 public class EventBridgeV2Writer implements EventBridgeSinkWriter {
 
@@ -114,6 +118,10 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
     }
   }
 
+  /** Per-entry error codes that are transient and retried under the configured retry policy. */
+  static final Set<String> RETRYABLE_ENTRY_ERROR_CODES =
+      Set.of("ThrottlingException", "InternalError");
+
   private static List<EventBridgeResult<String>> mapResponse(
       List<MappedSinkRecord<PutRawEventsRequestEntry>> batch, PutRawEventsResponse response) {
     var results = new ArrayList<EventBridgeResult<String>>();
@@ -121,11 +129,12 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
       var sinkRecord = batch.get(i).getSinkRecord();
       var resultEntry = response.entries().get(i);
       if (resultEntry.errorCode() != null) {
-        results.add(
-            failure(
-                sinkRecord,
-                reportOnly(
-                    String.format("%s: %s", resultEntry.errorCode(), resultEntry.errorMessage()))));
+        var message = String.format("%s: %s", resultEntry.errorCode(), resultEntry.errorMessage());
+        var error =
+            RETRYABLE_ENTRY_ERROR_CODES.contains(resultEntry.errorCode())
+                ? retry(new RetriableException(message))
+                : reportOnly(message);
+        results.add(failure(sinkRecord, error));
       } else {
         var outcome =
             resultEntry.successCode() == SuccessCode.DEDUPLICATED ? DEDUPLICATED : PUBLISHED;

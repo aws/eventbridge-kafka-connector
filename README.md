@@ -719,10 +719,19 @@ follows:
 
 | Error | Handling |
 |-------|----------|
-| Per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema) | Only that record fails; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
+| Per-entry `ThrottlingException` or `InternalError` inside a successful response | Only that record is retried, under `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`. The other entries in the request are published once. If the retries run out, the task fails. |
+| Any other per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema, or a code the connector does not recognize) | Only that record fails, without a retry; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
 | `ThrottlingException`, `SchemaRegistryUnavailableException`, `InternalException`, timeouts | All records in the request are retried. |
 | `InvalidInputException`, `AccessDeniedException`, `ResourceNotFoundException` | Not retried; the task fails, since these indicate a configuration or permission problem. |
+| Entry larger than 1 MiB | Never sent; fails without a retry and goes to the dead-letter queue if configured. |
 | Per-entry `DEDUPLICATED` result | Treated as a successful publish. |
+
+> [!TIP]
+> EventBridge limits ingestion per event group to 1,500 per second, counted as events plus their size in KB. Under
+> the default `topic-partition` grouping, a busy partition can go over that limit, and its entries come back with
+> per-entry `ThrottlingException`. With the default retry settings (2 retries, 200 ms apart), a group that stays over
+> the limit for more than about half a second fails the task instead of dropping records. For hot topics in v2 mode,
+> raise `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`, and spread the topic over more partitions.
 
 ### Authentication and Permissions
 

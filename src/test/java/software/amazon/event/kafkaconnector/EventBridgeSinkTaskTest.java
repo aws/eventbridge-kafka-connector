@@ -393,6 +393,85 @@ public class EventBridgeSinkTaskTest {
         .containsExactly("1");
   }
 
+  private static EventBridgeSinkConfig v2Config() {
+    return new EventBridgeSinkConfig(
+        Map.of(
+            "aws.eventbridge.retries.max", 2,
+            "aws.eventbridge.retries.delay", 0,
+            "aws.eventbridge.connector.id", "someId",
+            "aws.eventbridge.region", "eu-central-1",
+            "aws.eventbridge.eventbus.arn",
+                "arn:aws:events:eu-central-1:123456789012:event-busv2/my-bus/ABCDEFGHIJKLM1234567890",
+            "aws.eventbridge.api.version", "v2",
+            "aws.eventbridge.v2.payload.strategy", "raw"));
+  }
+
+  private static PutRawEventsResultEntry v2Published() {
+    return PutRawEventsResultEntry.builder()
+        .eventId("evt")
+        .successCode(SuccessCode.PUBLISHED)
+        .build();
+  }
+
+  private static PutRawEventsResultEntry v2Throttled() {
+    return PutRawEventsResultEntry.builder()
+        .errorCode("ThrottlingException")
+        .errorMessage("event group over quota")
+        .build();
+  }
+
+  private static List<String> offsetsOf(PutRawEventsRequest request) {
+    return request.entries().stream().map(e -> e.metadata().get("kafka.offset")).toList();
+  }
+
+  @Test
+  @DisplayName("v2: a per-entry throttled record is retried and delivered, not dead-lettered")
+  public void v2PerEntryThrottledRecordIsRetriedAndDelivered() {
+    var v2Client = org.mockito.Mockito.mock(EventBridgeV2AsyncClient.class);
+    when(v2Client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(1)
+                    .entries(v2Published(), v2Throttled())
+                    .build()))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder().failedEntryCount(0).entries(v2Published()).build()));
+    var config = v2Config();
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, new EventBridgeV2Writer(v2Client, config), dlq);
+
+    task.put(List.of(v2Record("a", 1), v2Record("b", 2)));
+
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(v2Client, times(2)).putRawEvents(captor.capture());
+    assertThat(captor.getAllValues())
+        .extracting(EventBridgeSinkTaskTest::offsetsOf)
+        .containsExactly(List.of("1", "2"), List.of("2"));
+    org.mockito.Mockito.verifyNoInteractions(dlq);
+    assertThat(task.counters().published()).isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName("v2: a record throttled until retries run out fails the task")
+  public void v2PerEntryThrottlingUntilRetriesExhaustedFailsTask() {
+    var v2Client = org.mockito.Mockito.mock(EventBridgeV2AsyncClient.class);
+    when(v2Client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder().failedEntryCount(1).entries(v2Throttled()).build()));
+    var config = v2Config();
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, new EventBridgeV2Writer(v2Client, config), dlq);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> task.put(List.of(v2Record("a", 1))))
+        .isInstanceOf(org.apache.kafka.connect.errors.ConnectException.class);
+    verify(v2Client, times(config.maxRetries + 1)).putRawEvents(any(PutRawEventsRequest.class));
+    org.mockito.Mockito.verifyNoInteractions(dlq);
+    assertThat(task.counters().published()).isZero();
+  }
+
   private <T> Function<PutEventsRequest, List<T>> fromPutEventsRequestDetail(
       Function<JsonNode, T> f) {
     return (PutEventsRequest request) ->
