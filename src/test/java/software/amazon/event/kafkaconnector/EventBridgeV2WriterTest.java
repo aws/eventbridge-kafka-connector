@@ -139,6 +139,35 @@ public class EventBridgeV2WriterTest {
   }
 
   @Test
+  void entryLargerThanRequestLimitIsReportedAndNeverSent() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(published("evt-1"), published("evt-3"))
+                    .build()));
+    var oversize = new SinkRecord("orders", 0, null, null, null, new byte[1024 * 1024 + 1], 2L);
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1), oversize, record(3)));
+
+    var failed = results.stream().filter(EventBridgeResult::isFailure).toList();
+    assertThat(failed).hasSize(1);
+    assertThat(failed.get(0).failure().getSinkRecord()).isSameAs(oversize);
+    assertThat(failed.get(0).failure().getValue().getType())
+        .isEqualTo(EventBridgeResult.ErrorType.REPORT_ONLY);
+    assertThat(failed.get(0).failure().getValue().getMessage()).contains("1 MiB");
+    assertThat(results).filteredOn(EventBridgeResult::isSuccess).hasSize(2);
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(client).putRawEvents(captor.capture());
+    assertThat(captor.getAllValues())
+        .flatExtracting(PutRawEventsRequest::entries)
+        .extracting(e -> e.metadata().get("kafka.offset"))
+        .containsExactly("1", "3");
+  }
+
+  @Test
   void perEntryErrorIsReportOnlyAndDoesNotAffectSiblingsIncludingDeduplicated() {
     when(client.putRawEvents(any(PutRawEventsRequest.class)))
         .thenReturn(

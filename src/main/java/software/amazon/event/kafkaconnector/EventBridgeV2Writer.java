@@ -27,7 +27,7 @@ import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequestEn
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResponse;
 import software.amazon.awssdk.services.eventbridgev2.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.eventbridgev2.model.SuccessCode;
-import software.amazon.event.kafkaconnector.batch.V2CountBatching;
+import software.amazon.event.kafkaconnector.batch.V2Batching;
 import software.amazon.event.kafkaconnector.mapping.CloudEventsMapper;
 import software.amazon.event.kafkaconnector.mapping.RawPayloadMapper;
 import software.amazon.event.kafkaconnector.mapping.SchemaRegistryConfigurations;
@@ -49,7 +49,7 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
   private final EventBridgeV2AsyncClient client;
   private final EventBridgeSinkConfig config;
   private final Function<SinkRecord, EventBridgeResult<PutRawEventsRequestEntry>> mapper;
-  private final V2CountBatching batching = new V2CountBatching();
+  private final V2Batching batching = new V2Batching();
 
   public EventBridgeV2Writer(EventBridgeV2AsyncClient client, EventBridgeSinkConfig config) {
     this(client, config, new PublishCounters());
@@ -72,10 +72,15 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
     var results = new ArrayList<EventBridgeResult<String>>();
     for (var record : records) {
       var result = mapper.apply(record);
-      if (result.isSuccess()) {
-        mapped.add(result.success());
-      } else {
+      if (result.isFailure()) {
         results.add(failure(result.failure()));
+        continue;
+      }
+      var entry = result.success().getValue();
+      if (V2Batching.size(entry) > V2Batching.MAX_BATCH_BYTES) {
+        results.add(failure(record, reportOnly(oversizeMessage(entry))));
+      } else {
+        mapped.add(result.success());
       }
     }
 
@@ -128,6 +133,13 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
       }
     }
     return results;
+  }
+
+  private static String oversizeMessage(PutRawEventsRequestEntry entry) {
+    return String.format(
+        "Entry is %d bytes, larger than the 1 MiB (%d bytes) PutRawEvents request limit counting"
+            + " data and metadata; not sent",
+        V2Batching.size(entry), V2Batching.MAX_BATCH_BYTES);
   }
 
   private static boolean isConfigurationError(Throwable cause) {

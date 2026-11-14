@@ -193,6 +193,12 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters. A
   key that is empty (an empty string or an empty byte array) is treated as a missing key: the entry carries no
   `kafka.key`, and `record-key` grouping handles it the same way as a record without a key.
+- **Request limits**: each `PutRawEvents` request carries at most 100 entries and at most 1 MiB (1,048,576 bytes) in
+  total. The connector counts an entry's size as the UTF-8 byte length of everything it carries: the data, each
+  metadata key and value, the content type, the `EventGroupId`, and the `DeduplicationId`. It starts a new request
+  when the next entry would go over either limit, so request order follows record order. An entry larger than 1 MiB
+  on its own is never sent: it fails without a retry and goes to the dead-letter queue if one is configured. Unlike
+  v1, v2 mode has no S3 offloading for large payloads.
 - **Identifier length**: EventBridge accepts `EventGroupId` and `DeduplicationId` values of 1 to 128 characters. A
   value of 128 characters or fewer is sent unchanged. A longer value, for example from a long topic name or record
   key, is replaced by its first 63 characters, a `-`, and the lowercase hex SHA-256 of the full value (UTF-8), which
@@ -1062,9 +1068,8 @@ software.amazon.event.kafkaconnector.exceptions.EventBridgePartialFailureRespons
 ```
 
 > [!NOTE]
-> This size limit and S3 offloading apply to the classic `PutEvents` path only. In v2 mode, requests are batched by
-> count (up to 100 entries), and an entry the service rejects is reported per entry and sent to the dead-letter queue
-> if configured.
+> S3 offloading applies to the classic `PutEvents` path only. In v2 mode, see [Request
+> limits](#v2-behavior-differences) under v2 behavior differences.
 
 ### Debugging Event Flow (TRACE-level logging)
 
