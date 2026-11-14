@@ -38,6 +38,11 @@ import software.amazon.awssdk.services.eventbridge.model.EventBridgeException;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsRequest;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridge.model.PutEventsResponse;
+import software.amazon.awssdk.services.eventbridgev2.EventBridgeV2AsyncClient;
+import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequest;
+import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResponse;
+import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResultEntry;
+import software.amazon.awssdk.services.eventbridgev2.model.SuccessCode;
 
 @ExtendWith(MockitoExtension.class)
 public class EventBridgeSinkTaskTest {
@@ -303,6 +308,89 @@ public class EventBridgeSinkTaskTest {
         .containsExactly(
             List.of("#".repeat(1024 * 1024)),
             List.of("2", "3", "4", "5", "6", "7", "8", "9", "10"));
+  }
+
+  private static EventBridgeSinkConfig v2RecordKeyConfig(String missingKeyPolicy) {
+    return new EventBridgeSinkConfig(
+        Map.of(
+            "aws.eventbridge.retries.max", 2,
+            "aws.eventbridge.retries.delay", 0,
+            "aws.eventbridge.connector.id", "someId",
+            "aws.eventbridge.region", "eu-central-1",
+            "aws.eventbridge.eventbus.arn",
+                "arn:aws:events:eu-central-1:123456789012:event-busv2/my-bus/ABCDEFGHIJKLM1234567890",
+            "aws.eventbridge.api.version", "v2",
+            "aws.eventbridge.v2.payload.strategy", "raw",
+            "aws.eventbridge.v2.event.group.id", "record-key",
+            "aws.eventbridge.v2.event.group.id.record.key.ack", true,
+            "aws.eventbridge.v2.event.group.id.missing.key", missingKeyPolicy));
+  }
+
+  private static SinkRecord v2Record(String key, long offset) {
+    return new SinkRecord("orders", 0, STRING_SCHEMA, key, null, new byte[] {1}, offset);
+  }
+
+  /** Answers every PutRawEvents request with one PUBLISHED entry per request entry. */
+  private static void publishEverything(EventBridgeV2AsyncClient client) {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              PutRawEventsRequest request = invocation.getArgument(0);
+              return completedFuture(
+                  PutRawEventsResponse.builder()
+                      .failedEntryCount(0)
+                      .entries(
+                          request.entries().stream()
+                              .map(
+                                  e ->
+                                      PutRawEventsResultEntry.builder()
+                                          .eventId("evt")
+                                          .successCode(SuccessCode.PUBLISHED)
+                                          .build())
+                              .toList())
+                      .build());
+            });
+  }
+
+  @Test
+  @DisplayName("v2: report policy sends a keyless record to the dead-letter queue")
+  public void v2ReportPolicySendsKeylessRecordToDlq() {
+    var v2Client = org.mockito.Mockito.mock(EventBridgeV2AsyncClient.class);
+    publishEverything(v2Client);
+    var v2Config = v2RecordKeyConfig("report");
+    var task = new EventBridgeSinkTask();
+    task.startInternal(v2Config, new EventBridgeV2Writer(v2Client, v2Config), dlq);
+    var keyless = v2Record(null, 2);
+
+    task.put(List.of(v2Record("order-1", 1), keyless, v2Record("order-3", 3)));
+
+    verify(dlq).report(org.mockito.ArgumentMatchers.eq(keyless), any(Throwable.class));
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(v2Client).putRawEvents(captor.capture());
+    assertThat(captor.getValue().entries()).hasSize(2);
+    assertThat(task.counters().published()).isEqualTo(2);
+    assertThat(task.counters().dlq()).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("v2: fail policy fails the task on a keyless record")
+  public void v2FailPolicyFailsTaskOnKeylessRecord() {
+    var v2Client = org.mockito.Mockito.mock(EventBridgeV2AsyncClient.class);
+    publishEverything(v2Client);
+    var v2Config = v2RecordKeyConfig("fail");
+    var task = new EventBridgeSinkTask();
+    task.startInternal(v2Config, new EventBridgeV2Writer(v2Client, v2Config), dlq);
+    var records = List.of(v2Record("order-1", 1), v2Record("", 2));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> task.put(records))
+        .isInstanceOf(org.apache.kafka.connect.errors.ConnectException.class)
+        .hasMessageContaining("aws.eventbridge.v2.event.group.id.missing.key");
+    org.mockito.Mockito.verifyNoInteractions(dlq);
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(v2Client).putRawEvents(captor.capture());
+    assertThat(captor.getValue().entries())
+        .extracting(e -> e.metadata().get("kafka.offset"))
+        .containsExactly("1");
   }
 
   private <T> Function<PutEventsRequest, List<T>> fromPutEventsRequestDetail(

@@ -31,7 +31,9 @@ import software.amazon.event.kafkaconnector.batch.V2CountBatching;
 import software.amazon.event.kafkaconnector.mapping.CloudEventsMapper;
 import software.amazon.event.kafkaconnector.mapping.RawPayloadMapper;
 import software.amazon.event.kafkaconnector.mapping.SchemaRegistryConfigurations;
+import software.amazon.event.kafkaconnector.mapping.V2EntryAssembly;
 import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 /**
  * Publishes Kafka records to an EventBridge Custom Event Bus via PutRawEvents.
@@ -50,12 +52,18 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
   private final V2CountBatching batching = new V2CountBatching();
 
   public EventBridgeV2Writer(EventBridgeV2AsyncClient client, EventBridgeSinkConfig config) {
+    this(client, config, new PublishCounters());
+  }
+
+  public EventBridgeV2Writer(
+      EventBridgeV2AsyncClient client, EventBridgeSinkConfig config, PublishCounters counters) {
     this.client = client;
     this.config = config;
+    var assembly = new V2EntryAssembly(config, counters);
     this.mapper =
         "cloudevents".equals(config.v2PayloadStrategy)
-            ? new CloudEventsMapper(config)::map
-            : new RawPayloadMapper(config)::map;
+            ? new CloudEventsMapper(config, assembly)::map
+            : new RawPayloadMapper(config, assembly)::map;
   }
 
   @Override

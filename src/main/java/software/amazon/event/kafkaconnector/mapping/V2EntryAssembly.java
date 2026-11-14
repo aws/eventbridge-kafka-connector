@@ -5,14 +5,26 @@
 package software.amazon.event.kafkaconnector.mapping;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.panic;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.reportOnly;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.failure;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
+import static software.amazon.event.kafkaconnector.EventBridgeSinkConfig.AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
+import org.slf4j.Logger;
+import software.amazon.event.kafkaconnector.EventBridgeResult;
 import software.amazon.event.kafkaconnector.EventBridgeSinkConfig;
+import software.amazon.event.kafkaconnector.logging.ContextAwareLoggerFactory;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 /**
  * Shared assembly of v2 entry metadata: record provenance (Metadata map), event grouping, and
@@ -23,7 +35,53 @@ public class V2EntryAssembly {
   static final int MAX_ID_LENGTH = 128;
   private static final int SHORTENED_PREFIX_LENGTH = 63;
 
-  private V2EntryAssembly() {}
+  private final Logger log = ContextAwareLoggerFactory.getLogger(V2EntryAssembly.class);
+  private final EventBridgeSinkConfig config;
+  private final PublishCounters counters;
+  private final Set<String> warnedPartitions = ConcurrentHashMap.newKeySet();
+
+  /** Per-task assembly that applies the missing-key policy and counts key fallbacks. */
+  public V2EntryAssembly(EventBridgeSinkConfig config, PublishCounters counters) {
+    this.config = config;
+    this.counters = counters;
+  }
+
+  /**
+   * EventGroupId for a record, applying the missing-key policy under record-key grouping. The
+   * success value is null when grouping is disabled.
+   */
+  public EventBridgeResult<String> eventGroup(SinkRecord record) {
+    if ("record-key".equals(config.v2EventGroupId) && presentKey(record) == null) {
+      if ("report".equals(config.v2EventGroupIdMissingKey)) {
+        return failure(record, reportOnly(missingKeyMessage(record)));
+      }
+      if ("fail".equals(config.v2EventGroupIdMissingKey)) {
+        return failure(record, panic(new DataException(missingKeyMessage(record))));
+      }
+      counters.addKeyFallbacks(1);
+      if (warnedPartitions.add(record.topic() + "-" + record.kafkaPartition())) {
+        log.warn(
+            "Record has no key under record-key grouping; grouping by topic-partition instead "
+                + "(logged once per topic-partition; see \"{}\"): topic={} partition={} offset={}",
+            AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG,
+            record.topic(),
+            record.kafkaPartition(),
+            record.kafkaOffset());
+      }
+    }
+    return success(record, eventGroupId(config, record));
+  }
+
+  private String missingKeyMessage(SinkRecord record) {
+    return String.format(
+        "Record has no key under record-key grouping and \"%s\" is \"%s\": topic=%s partition=%s"
+            + " offset=%s",
+        AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG,
+        config.v2EventGroupIdMissingKey,
+        record.topic(),
+        record.kafkaPartition(),
+        record.kafkaOffset());
+  }
 
   /**
    * Provenance Metadata entries for a record: kafka.topic, kafka.partition, kafka.offset, and

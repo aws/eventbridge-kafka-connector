@@ -147,6 +147,24 @@ public class CloudEventsMapperTest {
     assertThat(systemMetadata.deduplicationId()).hasSizeLessThanOrEqualTo(128);
   }
 
+  @Test
+  void reportPolicyTurnsKeylessRecordIntoReportOnlyFailure() {
+    var record = new SinkRecord("orders", 2, null, null, null, "{}", 41L);
+    var mapper =
+        new CloudEventsMapper(
+            configWith(
+                Map.of(
+                    "aws.eventbridge.v2.event.group.id", "record-key",
+                    "aws.eventbridge.v2.event.group.id.record.key.ack", true,
+                    "aws.eventbridge.v2.event.group.id.missing.key", "report")));
+
+    var result = mapper.map(record);
+
+    assertThat(result.isFailure()).isTrue();
+    assertThat(result.failure().getValue().getType())
+        .isEqualTo(software.amazon.event.kafkaconnector.EventBridgeResult.ErrorType.REPORT_ONLY);
+  }
+
   public static class FixedDetailTypeMapper implements DetailTypeMapper {
     @Override
     public String getDetailType(SinkRecord record) {

@@ -7,11 +7,16 @@ package software.amazon.event.kafkaconnector.mapping;
 import static org.apache.kafka.connect.data.Schema.STRING_SCHEMA;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.jupiter.api.Test;
+import software.amazon.event.kafkaconnector.EventBridgeResult;
 import software.amazon.event.kafkaconnector.EventBridgeSinkConfig;
+import software.amazon.event.kafkaconnector.TestUtils.ListAppender;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 public class V2EntryAssemblyTest {
 
@@ -133,12 +138,128 @@ public class V2EntryAssemblyTest {
   }
 
   private EventBridgeSinkConfig recordKeyConfig() {
-    return configWith(
-        Map.of(
-            "aws.eventbridge.v2.event.group.id",
-            "record-key",
-            "aws.eventbridge.v2.event.group.id.record.key.ack",
-            true));
+    return recordKeyConfig(Map.of());
+  }
+
+  private EventBridgeSinkConfig recordKeyConfig(Map<String, Object> extra) {
+    var props = new HashMap<String, Object>(extra);
+    props.put("aws.eventbridge.v2.event.group.id", "record-key");
+    props.put("aws.eventbridge.v2.event.group.id.record.key.ack", true);
+    return configWith(props);
+  }
+
+  @Test
+  void missingKeyWithDefaultPolicyFallsBackAndIsCounted() {
+    var counters = new PublishCounters();
+    var assembly = new V2EntryAssembly(recordKeyConfig(), counters);
+    var record = new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 41L);
+
+    var result = assembly.eventGroup(record);
+
+    assertThat(result.isSuccess()).isTrue();
+    assertThat(result.success().getValue()).isEqualTo("orders-2");
+    assertThat(counters.keyFallbacks()).isEqualTo(1);
+  }
+
+  @Test
+  void fallbackWarnsOncePerTopicPartition() {
+    var appender = ListAppender.of(V2EntryAssembly.class, Level.WARN);
+    appender.start();
+    try {
+      var counters = new PublishCounters();
+      var assembly = new V2EntryAssembly(recordKeyConfig(), counters);
+
+      assembly.eventGroup(new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 41L));
+      assembly.eventGroup(new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 42L));
+      assembly.eventGroup(new SinkRecord("orders", 3, null, null, STRING_SCHEMA, "{}", 7L));
+
+      var warnings =
+          appender.getLoggingEvents().stream()
+              .filter(e -> e.getLevel() == Level.WARN)
+              .map(ILoggingEvent::getFormattedMessage)
+              .toList();
+      assertThat(warnings).hasSize(2);
+      assertThat(warnings.get(0))
+          .contains("orders")
+          .contains("partition=2")
+          .contains("offset=41")
+          .contains("aws.eventbridge.v2.event.group.id.missing.key");
+      assertThat(warnings.get(1)).contains("partition=3").contains("offset=7");
+      assertThat(counters.keyFallbacks()).isEqualTo(3);
+    } finally {
+      appender.detach();
+    }
+  }
+
+  @Test
+  void missingKeyWithReportPolicyIsReportOnlyFailure() {
+    var counters = new PublishCounters();
+    var config = recordKeyConfig(Map.of("aws.eventbridge.v2.event.group.id.missing.key", "report"));
+    var assembly = new V2EntryAssembly(config, counters);
+    var nullKey = new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 41L);
+    var emptyKey = new SinkRecord("orders", 2, STRING_SCHEMA, "", STRING_SCHEMA, "{}", 42L);
+
+    for (var record : java.util.List.of(nullKey, emptyKey)) {
+      var result = assembly.eventGroup(record);
+
+      assertThat(result.isFailure()).isTrue();
+      var error = result.failure().getValue();
+      assertThat(error.getType()).isEqualTo(EventBridgeResult.ErrorType.REPORT_ONLY);
+      assertThat(error.getMessage())
+          .contains("no key")
+          .contains("aws.eventbridge.v2.event.group.id.missing.key");
+    }
+    assertThat(counters.keyFallbacks()).isZero();
+  }
+
+  @Test
+  void missingKeyWithFailPolicyPanicsNamingKeyAndSetting() {
+    var config = recordKeyConfig(Map.of("aws.eventbridge.v2.event.group.id.missing.key", "fail"));
+    var assembly = new V2EntryAssembly(config, new PublishCounters());
+    var record = new SinkRecord("orders", 2, null, new byte[0], STRING_SCHEMA, "{}", 41L);
+
+    var result = assembly.eventGroup(record);
+
+    assertThat(result.isFailure()).isTrue();
+    var error = result.failure().getValue();
+    assertThat(error.getType()).isEqualTo(EventBridgeResult.ErrorType.PANIC);
+    assertThat(error.getCause().getMessage())
+        .contains("no key")
+        .contains("aws.eventbridge.v2.event.group.id.missing.key")
+        .contains("offset=41");
+  }
+
+  @Test
+  void missingKeyPolicyHasNoEffectUnderTopicPartitionGrouping() {
+    var counters = new PublishCounters();
+    var config =
+        configWith(
+            Map.of(
+                "aws.eventbridge.v2.event.group.id", "topic-partition",
+                "aws.eventbridge.v2.event.group.id.missing.key", "report"));
+    var record = new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 41L);
+
+    var result = new V2EntryAssembly(config, counters).eventGroup(record);
+
+    assertThat(result.isSuccess()).isTrue();
+    assertThat(result.success().getValue()).isEqualTo("orders-2");
+    assertThat(counters.keyFallbacks()).isZero();
+  }
+
+  @Test
+  void recordWithKeyIsUnaffectedByEveryPolicy() {
+    var record = new SinkRecord("orders", 2, STRING_SCHEMA, "order-7", STRING_SCHEMA, "{}", 41L);
+
+    for (var policy : java.util.List.of("fallback", "report", "fail")) {
+      var counters = new PublishCounters();
+      var config = recordKeyConfig(Map.of("aws.eventbridge.v2.event.group.id.missing.key", policy));
+
+      var result = new V2EntryAssembly(config, counters).eventGroup(record);
+
+      assertThat(result.isSuccess()).isTrue();
+      assertThat(result.success().getValue()).isEqualTo("order-7");
+      assertThat(counters.keyFallbacks()).isZero();
+    }
   }
 
   @Test

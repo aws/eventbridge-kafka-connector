@@ -89,6 +89,19 @@ public class EventBridgeSinkConfigTest {
   }
 
   @Test
+  void v2MissingKeyPolicyDefaultsToFallbackAndParsesConfiguredValue() {
+    var defaultConfig = new EventBridgeSinkConfig(baseProps());
+    assertThat(defaultConfig.v2EventGroupIdMissingKey).isEqualTo("fallback");
+
+    var props = baseProps();
+    props.put("aws.eventbridge.api.version", "v2");
+    props.put("aws.eventbridge.v2.payload.strategy", "raw");
+    props.put("aws.eventbridge.v2.event.group.id.missing.key", "report");
+    var config = new EventBridgeSinkConfig(props);
+    assertThat(config.v2EventGroupIdMissingKey).isEqualTo("report");
+  }
+
+  @Test
   void v2DeduplicationIdDefaultsToTopicPartitionOffsetAndParsesConfiguredValue() {
     var defaultConfig = new EventBridgeSinkConfig(baseProps());
     assertThat(defaultConfig.v2DeduplicationId).isEqualTo("topic-partition-offset");

@@ -153,6 +153,7 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
 | `aws.eventbridge.v2.schema.registry.connection.arn`          | For Confluent registries      |                              | The ARN of the EventBridge connection holding Confluent registry credentials.                                                                                                                                                                                                            |
 | `aws.eventbridge.v2.event.group.id`                          | No                            | `topic-partition`            | The `EventGroupId` strategy: `topic-partition` extends Kafka per-partition ordering onto the bus, `record-key` groups by record key, `none` disables grouping.                                                                                                                             |
 | `aws.eventbridge.v2.event.group.id.record.key.ack`           | With `record-key` grouping    | `false`                      | Must be `true` to acknowledge that record-key grouping can create unbounded event group cardinality.                                                                                                                                                                                     |
+| `aws.eventbridge.v2.event.group.id.missing.key`              | No                            | `fallback`                   | What `record-key` grouping does with a record whose key is null or empty: `fallback` groups it by `<topic>-<partition>`, `report` fails it without a retry (dead-letter queue if configured), `fail` fails the task. Has no effect under other grouping strategies. See [Records without a key](#records-without-a-key-under-record-key-grouping). |
 | `aws.eventbridge.v2.deduplication.id`                        | No                            | `topic-partition-offset`     | The `DeduplicationId` strategy; the default suppresses retry-induced duplicate publishes within the service deduplication window (300s). `none` disables deduplication.                                                                                                                    |
 
 > [!IMPORTANT]
@@ -209,6 +210,21 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   `DEDUPLICATED`. The connector treats this as a successful publish and counts it as `deduplicated`, not `published`,
   in the status log (see [Debugging Event Flow](#debugging-event-flow-trace-level-logging)). Outside the window,
   delivery remains *at-least-once*.
+
+#### Records without a key under record-key grouping
+
+With `aws.eventbridge.v2.event.group.id=record-key`, each record's key becomes its `EventGroupId`, so FIFO
+subscribers receive the events for one key in order. A record whose key is null, an empty string, or an empty byte
+array has no key to group by. `aws.eventbridge.v2.event.group.id.missing.key` decides what happens to it:
+
+| Policy               | Result                                                                                                                                                                                      | Effect on per-key order                                                                                   |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `fallback` (default) | Published with `EventGroupId` `<topic>-<partition>`. The connector logs a warning for the first such record on each topic-partition and counts every one as `keyFallbacks` in the status log. | Lost for that record: it is not ordered relative to the records of the key it should have had.            |
+| `report`             | Not published. Fails without a retry and goes to the dead-letter queue, or is logged and dropped if no dead-letter queue is configured.                                                     | Kept for published records. Configure a dead-letter queue, or records without keys are dropped.           |
+| `fail`               | Not published. The task fails with an error naming the record and the setting.                                                                                                              | Kept. The task stays down until the producer is fixed or the policy changes.                              |
+
+Choose `report` or `fail` when a record without a key means a producer bug and per-key order matters more than
+availability.
 
 #### v2 IAM permissions
 

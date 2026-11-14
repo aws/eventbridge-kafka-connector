@@ -41,7 +41,7 @@ public class EventBridgeSinkTask extends SinkTask {
     log.info("Starting Kafka Connect task for EventBridgeSinkConnector");
 
     var config = new EventBridgeSinkConfig(properties);
-    var eventBridgeWriter = createWriter(properties);
+    var eventBridgeWriter = createWriter(properties, counters);
 
     ErrantRecordReporter dlq;
     try {
@@ -61,11 +61,12 @@ public class EventBridgeSinkTask extends SinkTask {
    * runs here as well so inconsistent configurations fail at task startup even when the connector
    * validate endpoint was bypassed.
    */
-  static EventBridgeSinkWriter createWriter(Map<String, String> properties) {
+  static EventBridgeSinkWriter createWriter(
+      Map<String, String> properties, PublishCounters counters) {
     EventBridgeSinkConfigValidator.validateCrossField(properties);
     var config = new EventBridgeSinkConfig(properties);
     if ("v2".equals(config.apiVersion)) {
-      return new EventBridgeV2Writer(EventBridgeV2ClientFactory.create(config), config);
+      return new EventBridgeV2Writer(EventBridgeV2ClientFactory.create(config), config, counters);
     }
     return new EventBridgeWriter(config);
   }

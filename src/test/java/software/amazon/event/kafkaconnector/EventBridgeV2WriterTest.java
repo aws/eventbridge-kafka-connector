@@ -24,6 +24,7 @@ import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequest;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResponse;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResultEntry;
 import software.amazon.awssdk.services.eventbridgev2.model.SuccessCode;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 @ExtendWith(MockitoExtension.class)
 public class EventBridgeV2WriterTest {
@@ -111,6 +112,30 @@ public class EventBridgeV2WriterTest {
     var results = writer.putItems(List.of(record(1)));
 
     assertThat(results.get(0).outcome()).isEqualTo(EventBridgeResult.Outcome.PUBLISHED);
+  }
+
+  @Test
+  void keyFallbacksAreCountedInTheSuppliedCounters() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(published("evt-1"))
+                    .build()));
+    var counters = new PublishCounters();
+    var config =
+        configWith(
+            Map.of(
+                "aws.eventbridge.v2.event.group.id",
+                "record-key",
+                "aws.eventbridge.v2.event.group.id.record.key.ack",
+                true));
+    var writer = new EventBridgeV2Writer(client, config, counters);
+
+    writer.putItems(List.of(record(1)));
+
+    assertThat(counters.keyFallbacks()).isEqualTo(1);
   }
 
   @Test
