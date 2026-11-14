@@ -88,6 +88,22 @@ public class EventBridgeWriterTest {
   }
 
   @Test
+  public void successHasPublishedOutcome() {
+    when(eventBridgeAsyncClient.putEvents(any(PutEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(OfPutEventsResultEntry.withIdsIn(rangeClosed(1, 1)))
+                    .build()));
+
+    var writer = new EventBridgeWriter(eventBridgeAsyncClient, config);
+    var result = writer.putItems(OfSinkRecord.withIdsIn(rangeClosed(1, 1)));
+
+    assertThat(result.get(0).outcome()).isEqualTo(EventBridgeResult.Outcome.PUBLISHED);
+  }
+
+  @Test
   public void returnsFailureWithRecoverableErrorOnEventBridgeError() {
     when(eventBridgeAsyncClient.putEvents(any(PutEventsRequest.class)))
         .thenThrow(EventBridgeException.class);

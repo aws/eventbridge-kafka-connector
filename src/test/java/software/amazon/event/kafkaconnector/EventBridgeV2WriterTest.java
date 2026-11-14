@@ -77,6 +77,43 @@ public class EventBridgeV2WriterTest {
   }
 
   @Test
+  void deduplicatedEntryIsSuccessWithDeduplicatedOutcome() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(
+                        PutRawEventsResultEntry.builder()
+                            .eventId("evt-1")
+                            .successCode(SuccessCode.DEDUPLICATED)
+                            .build())
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1)));
+
+    assertThat(results.get(0).isSuccess()).isTrue();
+    assertThat(results.get(0).outcome()).isEqualTo(EventBridgeResult.Outcome.DEDUPLICATED);
+  }
+
+  @Test
+  void publishedEntryHasPublishedOutcome() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(published("evt-1"))
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1)));
+
+    assertThat(results.get(0).outcome()).isEqualTo(EventBridgeResult.Outcome.PUBLISHED);
+  }
+
+  @Test
   void perEntryErrorIsReportOnlyAndDoesNotAffectSiblingsIncludingDeduplicated() {
     when(client.putRawEvents(any(PutRawEventsRequest.class)))
         .thenReturn(

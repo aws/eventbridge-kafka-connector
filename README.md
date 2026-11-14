@@ -206,8 +206,9 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   events plus their size in KB), so a topic's throughput scales with its partition count.
 - **Deduplication**: with the default `topic-partition-offset` deduplication id, a record republished within the
   service deduplication window (300 seconds), e.g. after a retried batch, is suppressed by the bus and reported as
-  `DEDUPLICATED`. The connector treats this as a successful publish. Outside the window, delivery remains
-  *at-least-once*.
+  `DEDUPLICATED`. The connector treats this as a successful publish and counts it as `deduplicated`, not `published`,
+  in the status log (see [Debugging Event Flow](#debugging-event-flow-trace-level-logging)). Outside the window,
+  delivery remains *at-least-once*.
 
 #### v2 IAM permissions
 
@@ -1051,12 +1052,22 @@ software.amazon.event.kafkaconnector.exceptions.EventBridgePartialFailureRespons
 
 ### Debugging Event Flow (TRACE-level logging)
 
-The connector will periodically (asynchronously) on a per-task basis report the count of successful `PutEvents` API
-calls e.g.:
+The connector will periodically (asynchronously) on a per-task basis report cumulative record counts by final outcome,
+e.g.:
 
 ```console
-[2023-05-25 11:53:04,598] INFO [EventBridgeSink-Json|task-0] Total records sent=15 (software.amazon.event.kafkaconnector.util.StatusReporter:36)
+[2026-11-12 11:53:04,598] INFO [EventBridgeSink-Json|task-0] Total records: published=15 deduplicated=2 dlq=1 skipped=0 keyFallbacks=0 (software.amazon.event.kafkaconnector.util.StatusReporter:38)
 ```
+
+- `published`: records the bus accepted as new events.
+- `deduplicated`: records the bus accepted but suppressed as duplicates (v2 only, `DEDUPLICATED` results).
+- `dlq`: records that failed without a retry and were sent to the dead-letter queue.
+- `skipped`: records that failed without a retry and were dropped because no dead-letter queue is configured.
+- `keyFallbacks`: records without a key that `record-key` grouping placed in their `<topic>-<partition>` group
+  (v2 only).
+
+Each record is counted once, when its outcome is final, so records retried during a flush are not counted twice. A
+record that fails the task (retries exhausted or a non-retryable error) is not counted.
 
 > [!TIP]
 > Depending on your Kafka Connect environment, you can enable `[EventBridgeSink-Json|task-0]` logging style using this environment variable in Kafka Connect `CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"`

@@ -69,22 +69,39 @@ public class EventBridgeResult<T> {
     }
   }
 
-  private final Object value;
+  /** How the service handled a successfully sent record. */
+  public enum Outcome {
+    PUBLISHED,
+    DEDUPLICATED
+  }
 
-  private EventBridgeResult(Object value) {
+  private final Object value;
+  private final Outcome outcome;
+
+  private EventBridgeResult(Object value, Outcome outcome) {
     this.value = value;
+    this.outcome = outcome;
   }
 
   public static <T> EventBridgeResult<T> success(SinkRecord sinkRecord, T value) {
-    return new EventBridgeResult<>(new MappedSinkRecord<>(sinkRecord, value));
+    return success(sinkRecord, value, Outcome.PUBLISHED);
+  }
+
+  public static <T> EventBridgeResult<T> success(SinkRecord sinkRecord, T value, Outcome outcome) {
+    return new EventBridgeResult<>(new MappedSinkRecord<>(sinkRecord, value), outcome);
   }
 
   public static <T> EventBridgeResult<T> failure(SinkRecord sinkRecord, Error error) {
-    return new EventBridgeResult<>(new Failure(sinkRecord, error));
+    return new EventBridgeResult<>(new Failure(sinkRecord, error), null);
   }
 
   public static <T> EventBridgeResult<T> failure(MappedSinkRecord<Error> value) {
-    return new EventBridgeResult<>(new Failure(value.getSinkRecord(), value.getValue()));
+    return new EventBridgeResult<>(new Failure(value.getSinkRecord(), value.getValue()), null);
+  }
+
+  /** The outcome of a success; null for a failure. */
+  public Outcome outcome() {
+    return outcome;
   }
 
   public boolean isSuccess() {

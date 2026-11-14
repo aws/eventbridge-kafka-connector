@@ -7,28 +7,24 @@ package software.amazon.event.kafkaconnector.util;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import software.amazon.event.kafkaconnector.logging.ContextAwareLoggerFactory;
 
-/** The StatusReporter is a scheduled task that logs the throughput of the connector */
+/** The StatusReporter is a scheduled task that logs the connector's record counts by outcome */
 public class StatusReporter {
 
   private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
   private final Logger log = ContextAwareLoggerFactory.getLogger(StatusReporter.class);
-  private final AtomicInteger totalRecordsSent = new AtomicInteger(0);
 
   private final long interval;
   private final TimeUnit timeUnit;
+  private final PublishCounters counters;
 
-  public StatusReporter(long interval, TimeUnit timeUnit) {
+  public StatusReporter(long interval, TimeUnit timeUnit, PublishCounters counters) {
     this.interval = interval;
     this.timeUnit = timeUnit;
-  }
-
-  public void setSentRecords(Integer sentRecords) {
-    this.totalRecordsSent.addAndGet(sentRecords);
+    this.counters = counters;
   }
 
   public boolean isRunning() {
@@ -38,7 +34,14 @@ public class StatusReporter {
   public void startAsync() {
     log.info("Starting status reporter");
     scheduler.scheduleAtFixedRate(
-        () -> log.info("Total records sent={}", totalRecordsSent.get()),
+        () ->
+            log.info(
+                "Total records: published={} deduplicated={} dlq={} skipped={} keyFallbacks={}",
+                counters.published(),
+                counters.deduplicated(),
+                counters.dlq(),
+                counters.skipped(),
+                counters.keyFallbacks()),
         interval,
         interval,
         timeUnit);

@@ -8,6 +8,8 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.panic;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.reportOnly;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.retry;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Outcome.DEDUPLICATED;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Outcome.PUBLISHED;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.failure;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
 
@@ -24,6 +26,7 @@ import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequest;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResponse;
 import software.amazon.awssdk.services.eventbridgev2.model.ResourceNotFoundException;
+import software.amazon.awssdk.services.eventbridgev2.model.SuccessCode;
 import software.amazon.event.kafkaconnector.batch.V2CountBatching;
 import software.amazon.event.kafkaconnector.mapping.CloudEventsMapper;
 import software.amazon.event.kafkaconnector.mapping.RawPayloadMapper;
@@ -111,8 +114,9 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
                 reportOnly(
                     String.format("%s: %s", resultEntry.errorCode(), resultEntry.errorMessage()))));
       } else {
-        // PUBLISHED and DEDUPLICATED are both successful publishes
-        results.add(success(sinkRecord, resultEntry.eventId()));
+        var outcome =
+            resultEntry.successCode() == SuccessCode.DEDUPLICATED ? DEDUPLICATED : PUBLISHED;
+        results.add(success(sinkRecord, resultEntry.eventId(), outcome));
       }
     }
     return results;

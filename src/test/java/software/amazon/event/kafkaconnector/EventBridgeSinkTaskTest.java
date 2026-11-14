@@ -137,6 +137,130 @@ public class EventBridgeSinkTaskTest {
   }
 
   @Test
+  @DisplayName("should count each record once when a flush needs a retry round")
+  public void countsRetriedRecordsOnce() {
+    when(eventBridgeAsyncClient.putEvents(any(PutEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(OfPutEventsResultEntry.withIdsIn(rangeClosed(1, 10)))
+                    .build()))
+        .thenThrow(
+            AwsServiceException.builder()
+                .cause(EventBridgeException.builder().statusCode(500).build())
+                .build())
+        .thenReturn(
+            completedFuture(
+                PutEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(OfPutEventsResultEntry.withIdsIn(rangeClosed(11, 15)))
+                    .build()));
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, new EventBridgeWriter(eventBridgeAsyncClient, config), dlq);
+
+    task.put(OfSinkRecord.withIdsIn(rangeClosed(1, 15)));
+
+    assertThat(task.counters().published()).isEqualTo(15);
+  }
+
+  /** Writer that fails records whose offset is in {@code reportOnly} and publishes the rest. */
+  private static EventBridgeSinkWriter writerFailingReportOnly(List<Long> reportOnly) {
+    return new EventBridgeSinkWriter() {
+      @Override
+      public List<? extends EventBridgeResult<?>> putItems(List<SinkRecord> records) {
+        return records.stream()
+            .map(
+                r ->
+                    reportOnly.contains(r.kafkaOffset())
+                        ? EventBridgeResult.<String>failure(
+                            r, EventBridgeResult.Error.reportOnly("rejected"))
+                        : EventBridgeResult.success(r, "evt"))
+            .toList();
+      }
+
+      @Override
+      public void shutdown() {}
+    };
+  }
+
+  @Test
+  @DisplayName("should count report-only failures as dlq, not published")
+  public void countsReportOnlyFailuresAsDlq() {
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, writerFailingReportOnly(List.of(3L, 7L)), dlq);
+
+    task.put(OfSinkRecord.withIdsIn(rangeClosed(1, 10)));
+
+    assertThat(task.counters().published()).isEqualTo(8);
+    assertThat(task.counters().dlq()).isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName("should count report-only failures as skipped without a dead-letter queue")
+  public void countsReportOnlyFailuresAsSkippedWithoutDlq() {
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, writerFailingReportOnly(List.of(5L)), null);
+
+    task.put(OfSinkRecord.withIdsIn(rangeClosed(1, 5)));
+
+    assertThat(task.counters().published()).isEqualTo(4);
+    assertThat(task.counters().skipped()).isEqualTo(1);
+    assertThat(task.counters().dlq()).isZero();
+  }
+
+  @Test
+  @DisplayName("should count deduplicated results apart from publishes")
+  public void countsDeduplicatedApartFromPublished() {
+    var writer =
+        new EventBridgeSinkWriter() {
+          @Override
+          public List<? extends EventBridgeResult<?>> putItems(List<SinkRecord> records) {
+            return records.stream()
+                .map(
+                    r ->
+                        EventBridgeResult.success(
+                            r,
+                            "evt",
+                            r.kafkaOffset() > 3
+                                ? EventBridgeResult.Outcome.DEDUPLICATED
+                                : EventBridgeResult.Outcome.PUBLISHED))
+                .toList();
+          }
+
+          @Override
+          public void shutdown() {}
+        };
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, writer, dlq);
+
+    task.put(OfSinkRecord.withIdsIn(rangeClosed(1, 5)));
+
+    assertThat(task.counters().published()).isEqualTo(3);
+    assertThat(task.counters().deduplicated()).isEqualTo(2);
+  }
+
+  @Test
+  @DisplayName("should count only published records in classic mode")
+  public void classicModeCountsOnlyPublished() {
+    when(eventBridgeAsyncClient.putEvents(any(PutEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(OfPutEventsResultEntry.withIdsIn(rangeClosed(1, 5)))
+                    .build()));
+    var task = new EventBridgeSinkTask();
+    task.startInternal(config, new EventBridgeWriter(eventBridgeAsyncClient, config), dlq);
+
+    task.put(OfSinkRecord.withIdsIn(rangeClosed(1, 5)));
+
+    assertThat(task.counters().published()).isEqualTo(5);
+    assertThat(task.counters().deduplicated()).isZero();
+    assertThat(task.counters().keyFallbacks()).isZero();
+  }
+
+  @Test
   @DisplayName("should not retry size exceeding record")
   public void shouldNotRetry() {
     var secondResponse =
