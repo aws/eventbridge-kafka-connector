@@ -136,6 +136,17 @@ public class CloudEventsMapperTest {
     assertThat(event.getTime().toInstant()).isEqualTo(FixedTimeMapper.TIME);
   }
 
+  @Test
+  void recordFromLongTopicGetsIdsWithinServiceLimit() {
+    var record = new SinkRecord("t".repeat(200), 2, null, null, null, "{}", 41L);
+    var mapper = new CloudEventsMapper(configWith(Map.of()));
+
+    var systemMetadata = mapper.map(record).success().getValue().systemMetadata();
+
+    assertThat(systemMetadata.eventGroupId()).hasSizeLessThanOrEqualTo(128);
+    assertThat(systemMetadata.deduplicationId()).hasSizeLessThanOrEqualTo(128);
+  }
+
   public static class FixedDetailTypeMapper implements DetailTypeMapper {
     @Override
     public String getDetailType(SinkRecord record) {

@@ -189,7 +189,14 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   dead-letter queue if one is configured. v1 publishes them with `"value": null` in the event `detail`.
 - **Record metadata**: the v1 `detail` envelope (topic, partition, offset, key) does not exist in v2. Each v2 entry
   instead carries the `Metadata` keys `kafka.topic`, `kafka.partition`, `kafka.offset`, and `kafka.key` (when the
-  record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters.
+  record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters. A
+  key that is empty (an empty string or an empty byte array) is treated as a missing key: the entry carries no
+  `kafka.key`, and `record-key` grouping handles it the same way as a record without a key.
+- **Identifier length**: EventBridge accepts `EventGroupId` and `DeduplicationId` values of 1 to 128 characters. A
+  value of 128 characters or fewer is sent unchanged. A longer value, for example from a long topic name or record
+  key, is replaced by its first 63 characters, a `-`, and the lowercase hex SHA-256 of the full value (UTF-8), which
+  is 128 characters in total. If character 63 is the first half of a surrogate pair, the prefix is 62 characters. The
+  result depends only on the full value, so grouping and deduplication keep working across retries and restarts.
 - **CloudEvents strategy**: each record becomes a CloudEvents 1.0 JSON envelope with `source`
   `kafka-connect.<connector-id>`, `type` from the configured `detail-type` mapping, `id` `<topic>-<partition>-<offset>`,
   `subject` set to the topic, and `time` from the configured time mapper. Values are carried as JSON `data`, or as

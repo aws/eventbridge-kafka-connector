@@ -105,6 +105,43 @@ public class V2EntryAssemblyTest {
   }
 
   @Test
+  void eventGroupIdRecordKeyTreatsEmptyStringKeyAsMissing() {
+    var record = new SinkRecord("orders", 2, STRING_SCHEMA, "", STRING_SCHEMA, "{}", 41L);
+
+    assertThat(V2EntryAssembly.eventGroupId(recordKeyConfig(), record)).isEqualTo("orders-2");
+  }
+
+  @Test
+  void eventGroupIdRecordKeyTreatsEmptyByteKeyAsMissing() {
+    var record = new SinkRecord("orders", 2, null, new byte[0], STRING_SCHEMA, "{}", 41L);
+
+    assertThat(V2EntryAssembly.eventGroupId(recordKeyConfig(), record)).isEqualTo("orders-2");
+  }
+
+  @Test
+  void provenanceOmitsEmptyStringKey() {
+    var record = new SinkRecord("orders", 0, STRING_SCHEMA, "", STRING_SCHEMA, "{}", 7L);
+
+    assertThat(V2EntryAssembly.provenance(record)).doesNotContainKey("kafka.key");
+  }
+
+  @Test
+  void provenanceOmitsEmptyByteKey() {
+    var record = new SinkRecord("orders", 0, null, new byte[0], STRING_SCHEMA, "{}", 7L);
+
+    assertThat(V2EntryAssembly.provenance(record)).doesNotContainKey("kafka.key");
+  }
+
+  private EventBridgeSinkConfig recordKeyConfig() {
+    return configWith(
+        Map.of(
+            "aws.eventbridge.v2.event.group.id",
+            "record-key",
+            "aws.eventbridge.v2.event.group.id.record.key.ack",
+            true));
+  }
+
+  @Test
   void deduplicationIdDefaultsToTopicPartitionOffset() {
     var record = new SinkRecord("orders", 2, null, null, STRING_SCHEMA, "{}", 41L);
     var config = configWith(Map.of());
@@ -118,5 +155,84 @@ public class V2EntryAssemblyTest {
     var config = configWith(Map.of("aws.eventbridge.v2.deduplication.id", "none"));
 
     assertThat(V2EntryAssembly.deduplicationId(config, record)).isNull();
+  }
+
+  @Test
+  void idsFromLongTopicStayWithinServiceLimit() {
+    var topic = "t".repeat(200);
+    var record = new SinkRecord(topic, 2, null, null, STRING_SCHEMA, "{}", 41L);
+    var config = configWith(Map.of());
+
+    var groupId = V2EntryAssembly.eventGroupId(config, record);
+    var dedupId = V2EntryAssembly.deduplicationId(config, record);
+
+    assertThat(groupId).hasSizeBetween(1, 128);
+    assertThat(dedupId).hasSizeBetween(1, 128);
+  }
+
+  @Test
+  void shortenedIdIsPrefixDashAndSha256OfFullValue() {
+    var record = new SinkRecord("t".repeat(200), 2, null, null, STRING_SCHEMA, "{}", 41L);
+    var config = configWith(Map.of());
+
+    var groupId = V2EntryAssembly.eventGroupId(config, record);
+
+    // pinned: changing the scheme changes every long-named group on the bus
+    assertThat(groupId)
+        .isEqualTo(
+            "t".repeat(63) + "-e2f5dd03937f0b0f32af2fd10e19def8086276d723e3bc2d69e9b1965ebc1636")
+        .hasSize(128);
+  }
+
+  @Test
+  void shortenedIdIsDeterministic() {
+    var value = "x".repeat(300);
+
+    assertThat(V2EntryAssembly.shorten(value)).isEqualTo(V2EntryAssembly.shorten(value));
+  }
+
+  @Test
+  void longValuesSharingPrefixShortenDifferently() {
+    var prefix = "p".repeat(100);
+
+    assertThat(V2EntryAssembly.shorten(prefix + "-a"))
+        .isNotEqualTo(V2EntryAssembly.shorten(prefix + "-b"));
+  }
+
+  @Test
+  void valueOfExactly128CharactersPassesThrough() {
+    var value = "v".repeat(128);
+
+    assertThat(V2EntryAssembly.shorten(value)).isEqualTo(value);
+  }
+
+  @Test
+  void longRecordKeyIsShortenedUnderRecordKeyGrouping() {
+    var key = "k".repeat(500);
+    var first = new SinkRecord("orders", 2, STRING_SCHEMA, key, STRING_SCHEMA, "{}", 41L);
+    var second = new SinkRecord("orders", 5, STRING_SCHEMA, key, STRING_SCHEMA, "{}", 42L);
+    var config =
+        configWith(
+            Map.of(
+                "aws.eventbridge.v2.event.group.id",
+                "record-key",
+                "aws.eventbridge.v2.event.group.id.record.key.ack",
+                true));
+
+    var firstId = V2EntryAssembly.eventGroupId(config, first);
+
+    assertThat(firstId).hasSizeLessThanOrEqualTo(128);
+    assertThat(V2EntryAssembly.eventGroupId(config, second)).isEqualTo(firstId);
+  }
+
+  @Test
+  void shorteningDoesNotSplitSurrogatePairAtPrefixBoundary() {
+    // character 63 (index 62) is the high surrogate of U+1F600
+    var value = "a".repeat(62) + "\uD83D\uDE00" + "b".repeat(100);
+
+    var shortened = V2EntryAssembly.shorten(value);
+
+    assertThat(shortened).startsWith("a".repeat(62) + "-").hasSizeLessThanOrEqualTo(128);
+    assertThat(Character.isHighSurrogate(shortened.charAt(61))).isFalse();
   }
 }

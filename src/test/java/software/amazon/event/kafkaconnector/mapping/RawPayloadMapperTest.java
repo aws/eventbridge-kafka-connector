@@ -126,4 +126,15 @@ public class RawPayloadMapperTest {
 
     assertThat(entry.systemMetadata().contentType()).isEqualTo("application/octet-stream");
   }
+
+  @Test
+  void recordFromLongTopicGetsIdsWithinServiceLimit() {
+    var record = new SinkRecord("t".repeat(200), 2, null, null, null, "{}", 41L);
+    var mapper = new RawPayloadMapper(configWith(Map.of()));
+
+    var systemMetadata = mapper.map(record).success().getValue().systemMetadata();
+
+    assertThat(systemMetadata.eventGroupId()).hasSizeLessThanOrEqualTo(128);
+    assertThat(systemMetadata.deduplicationId()).hasSizeLessThanOrEqualTo(128);
+  }
 }
