@@ -194,11 +194,11 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   key that is empty (an empty string or an empty byte array) is treated as a missing key: the entry carries no
   `kafka.key`, and `record-key` grouping handles it the same way as a record without a key.
 - **Request limits**: each `PutRawEvents` request carries at most 100 entries and at most 1 MiB (1,048,576 bytes) in
-  total. The connector counts an entry's size as the UTF-8 byte length of everything it carries: the data, each
-  metadata key and value, the content type, the `EventGroupId`, and the `DeduplicationId`. It starts a new request
-  when the next entry would go over either limit, so request order follows record order. An entry larger than 1 MiB
-  on its own is never sent: it fails without a retry and goes to the dead-letter queue if one is configured. Unlike
-  v1, v2 mode has no S3 offloading for large payloads.
+  total. An entry's size is counted the way EventBridge counts it: the bytes of the data plus the UTF-8 bytes of each
+  metadata key and value. System metadata (the content type, `EventGroupId`, and `DeduplicationId`) does not count.
+  The connector starts a new request when the next entry would go over either limit, so request order follows record
+  order. An entry larger than 1 MiB on its own is never sent: it fails without a retry and goes to the dead-letter
+  queue if one is configured. Unlike v1, v2 mode has no S3 offloading for large payloads.
 - **Identifier length**: EventBridge accepts `EventGroupId` and `DeduplicationId` values of 1 to 128 characters. A
   value of 128 characters or fewer is sent unchanged. A longer value, for example from a long topic name or record
   key, is replaced by its first 63 characters, a `-`, and the lowercase hex SHA-256 of the full value (UTF-8), which
@@ -725,7 +725,7 @@ follows:
 
 | Error | Handling |
 |-------|----------|
-| Per-entry `ThrottlingException` or `InternalError` inside a successful response | Only that record is retried, under `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`. The other entries in the request are published once. If the retries run out, the task fails. |
+| Per-entry `ThrottlingException` (event group over its quota), `InternalError`, or `Throttling` (the service is shedding load) inside a successful response | Only that record is retried, under `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`. The other entries in the request are published once. If the retries run out, the task fails. |
 | Any other per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema, or a code the connector does not recognize) | Only that record fails, without a retry; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
 | `ThrottlingException`, `SchemaRegistryUnavailableException`, `InternalException`, timeouts | All records in the request are retried. |
 | `InvalidInputException`, `AccessDeniedException`, `ResourceNotFoundException` | Not retried; the task fails, since these indicate a configuration or permission problem. |
