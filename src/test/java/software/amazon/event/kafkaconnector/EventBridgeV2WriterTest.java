@@ -140,6 +140,39 @@ public class EventBridgeV2WriterTest {
   }
 
   @Test
+  void systemMetadataDoesNotCountTowardTheRequestLimit() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(0)
+                    .entries(published("evt-2"))
+                    .build()));
+    var probe = new SinkRecord("orders", 0, null, null, null, new byte[0], 2L);
+    var metadataBytes =
+        software.amazon.event.kafkaconnector.mapping.V2EntryAssembly.provenance(probe)
+            .entrySet()
+            .stream()
+            .mapToLong(
+                e ->
+                    e.getKey().getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                        + e.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
+            .sum();
+    var dataBytes = (int) (1024 * 1024 - metadataBytes);
+    var exact = new SinkRecord("orders", 0, null, null, null, new byte[dataBytes], 2L);
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(exact));
+
+    assertThat(results.get(0).isSuccess()).isTrue();
+    var captor = ArgumentCaptor.forClass(PutRawEventsRequest.class);
+    verify(client).putRawEvents(captor.capture());
+    var sm = captor.getValue().entries().get(0).systemMetadata();
+    assertThat(sm.eventGroupId()).isNotNull();
+    assertThat(sm.deduplicationId()).isNotNull();
+  }
+
+  @Test
   void entryLargerThanRequestLimitIsReportedAndNeverSent() {
     when(client.putRawEvents(any(PutRawEventsRequest.class)))
         .thenReturn(

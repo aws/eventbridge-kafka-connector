@@ -63,19 +63,20 @@ public class V2BatchingTest {
   }
 
   @Test
-  void entrySizeCountsDataMetadataContentTypeAndIdsAsUtf8Bytes() {
+  void entrySizeCountsDataAndMetadataButNotSystemMetadata() {
     var entry =
         PutRawEventsRequestEntry.builder()
             .data(SdkBytes.fromByteArray(new byte[10]))
             .metadata(Map.of("kafka.topic", "größe")) // 11 + 7 bytes
             .systemMetadata(
                 sm ->
-                    sm.contentType("application/json") // 16
-                        .eventGroupId("orders-2") // 8
-                        .deduplicationId("orders-2-41")) // 11
+                    sm.contentType("application/json")
+                        .eventGroupId("orders-2")
+                        .deduplicationId("orders-2-41"))
             .build();
 
-    assertThat(V2Batching.size(entry)).isEqualTo(10 + 11 + 7 + 16 + 8 + 11);
+    // the service counts Data plus Metadata keys and values; SystemMetadata does not count
+    assertThat(V2Batching.size(entry)).isEqualTo(10 + 11 + 7);
   }
 
   private static MappedSinkRecord<PutRawEventsRequestEntry> sized(
@@ -106,6 +107,27 @@ public class V2BatchingTest {
   void entryThatExactlyFillsTheLimitIsSentAlone() {
     var exact = (int) V2Batching.MAX_BATCH_BYTES;
     var input = List.of(sized(0, 1, 10), sized(0, 2, exact), sized(0, 3, 10));
+
+    var batches = new V2Batching().apply(input);
+
+    assertThat(batches).extracting(List::size).containsExactly(1, 1, 1);
+    assertThat(requestSize(batches.get(1))).isEqualTo(V2Batching.MAX_BATCH_BYTES);
+  }
+
+  @Test
+  void entryFillingTheLimitWithSystemMetadataSetIsBatchedAlone() {
+    var exact =
+        new MappedSinkRecord<>(
+            new SinkRecord("orders", 0, null, null, null, new byte[] {1}, 2L),
+            PutRawEventsRequestEntry.builder()
+                .data(SdkBytes.fromByteArray(new byte[(int) V2Batching.MAX_BATCH_BYTES]))
+                .systemMetadata(
+                    sm ->
+                        sm.contentType("application/octet-stream")
+                            .eventGroupId("orders-0")
+                            .deduplicationId("orders-0-2"))
+                .build());
+    var input = List.of(sized(0, 1, 10), exact, sized(0, 3, 10));
 
     var batches = new V2Batching().apply(input);
 

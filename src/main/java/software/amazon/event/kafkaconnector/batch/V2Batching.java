@@ -25,8 +25,9 @@ public class V2Batching {
   public static final long MAX_BATCH_BYTES = 1024 * 1024;
 
   /**
-   * Conservative request size of an entry: the UTF-8 byte length of everything it carries (data,
-   * metadata keys and values, content type, event group and deduplication ids).
+   * Request size of an entry as the service counts it: the bytes of the data plus the UTF-8 bytes
+   * of each metadata key and value. System metadata (content type, event group and deduplication
+   * ids) does not count.
    */
   public static long size(PutRawEventsRequestEntry entry) {
     long size = entry.data() == null ? 0 : entry.data().asByteArray().length;
@@ -34,10 +35,6 @@ public class V2Batching {
       for (var e : entry.metadata().entrySet()) {
         size += utf8(e.getKey()) + utf8(e.getValue());
       }
-    }
-    var sm = entry.systemMetadata();
-    if (sm != null) {
-      size += utf8(sm.contentType()) + utf8(sm.eventGroupId()) + utf8(sm.deduplicationId());
     }
     return size;
   }
