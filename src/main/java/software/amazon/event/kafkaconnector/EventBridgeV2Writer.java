@@ -41,11 +41,11 @@ import software.amazon.event.kafkaconnector.util.PublishCounters;
 /**
  * Publishes Kafka records to an EventBridge Custom Event Bus via PutRawEvents.
  *
- * <p>Error mapping: per-entry {@code ThrottlingException} and {@code InternalError} are retried;
- * other per-entry error codes are report-only; configuration errors (invalid input, access denied,
- * resource not found) panic; all other request-level failures, including throttling, schema
- * registry unavailability, internal errors, and timeouts, are retried. Entries over the 1 MiB
- * request limit are reported without being sent.
+ * <p>Error mapping: per-entry {@code ThrottlingException}, {@code InternalError}, and {@code
+ * Throttling} are retried; other per-entry error codes are report-only; configuration errors
+ * (invalid input, access denied, resource not found) panic; all other request-level failures,
+ * including throttling, schema registry unavailability, internal errors, and timeouts, are retried.
+ * Entries over the 1 MiB request limit are reported without being sent.
  */
 public class EventBridgeV2Writer implements EventBridgeSinkWriter {
 
@@ -171,9 +171,13 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
     }
   }
 
-  /** Per-entry error codes that are transient and retried under the configured retry policy. */
+  /**
+   * Per-entry error codes that are transient and retried under the configured retry policy:
+   * ThrottlingException (event group over quota), InternalError (internal server error), and
+   * Throttling (service load shedding; the service plans to fold it into InternalError).
+   */
   static final Set<String> RETRYABLE_ENTRY_ERROR_CODES =
-      Set.of("ThrottlingException", "InternalError");
+      Set.of("ThrottlingException", "InternalError", "Throttling");
 
   private static List<EventBridgeResult<String>> mapResponse(
       List<MappedSinkRecord<PutRawEventsRequestEntry>> batch, PutRawEventsResponse response) {

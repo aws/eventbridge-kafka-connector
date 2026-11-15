@@ -347,6 +347,23 @@ public class EventBridgeV2WriterTest {
   }
 
   @Test
+  void perEntryLoadSheddingThrottlingIsRetried() {
+    when(client.putRawEvents(any(PutRawEventsRequest.class)))
+        .thenReturn(
+            completedFuture(
+                PutRawEventsResponse.builder()
+                    .failedEntryCount(1)
+                    .entries(failed("Throttling"))
+                    .build()));
+    var writer = new EventBridgeV2Writer(client, configWith(Map.of()));
+
+    var results = writer.putItems(List.of(record(1)));
+
+    assertThat(results.get(0).failure().getValue().getType())
+        .isEqualTo(EventBridgeResult.ErrorType.RETRY);
+  }
+
+  @Test
   void perEntryInternalErrorIsRetried() {
     when(client.putRawEvents(any(PutRawEventsRequest.class)))
         .thenReturn(
