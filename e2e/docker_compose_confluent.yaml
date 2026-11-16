@@ -29,7 +29,7 @@ services:
       - kafka
     ports:
       - "127.0.0.1::8083"
-      # - "5005:5005"
+      # - "127.0.0.1:5005:5005"
     environment:
       # https://docs.confluent.io/platform/current/installation/configuration/connect/index.html
       CONNECT_BOOTSTRAP_SERVERS: "kafka:29092"

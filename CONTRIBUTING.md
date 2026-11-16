@@ -254,15 +254,22 @@ services:
     image: …
     depends_on: …
     ports:
-      - "8083"
-      - "5005:5005"
+      - "127.0.0.1::8083"
+      - "127.0.0.1:5005:5005"
     environment:
       # …
       KAFKA_OPTS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
     volumes:
       - …
 ```
-The port for JVM debugging is `5005` which can be changed with the shown port mapping configuration e.g., `"9000:5005"` to use port `9000` instead with your debugging tool. Use your favorite JVM debugging tool and start remote debugging. Do not forget to deploy the connector (see steps above).
+The port for JVM debugging is `5005` which can be changed with the shown port mapping configuration e.g., `"127.0.0.1:9000:5005"` to use port `9000` instead with your debugging tool. Use your favorite JVM debugging tool and start remote debugging. Do not forget to deploy the connector (see steps above).
+
+> [!IMPORTANT]
+> Keep the `127.0.0.1` prefix on both port mappings. A mapping without a host IP, such as `"5005:5005"`, publishes the
+> port on every network interface of your machine. Anyone who can reach the debug port can run code in the Connect
+> container, including reading the AWS credentials it uses, and the Kafka Connect REST API on `8083` has no
+> authentication. To debug from another machine, use an SSH tunnel (`ssh -L 5005:localhost:5005 <host>`) instead of
+> widening the binding.
 
 ## Finding contributions to work on
 Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
