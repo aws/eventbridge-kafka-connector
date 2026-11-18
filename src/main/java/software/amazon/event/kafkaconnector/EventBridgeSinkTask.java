@@ -24,6 +24,7 @@ import software.amazon.event.kafkaconnector.exceptions.EventBridgePartialFailure
 import software.amazon.event.kafkaconnector.logging.ContextAwareLoggerFactory;
 import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
 import software.amazon.event.kafkaconnector.util.PropertiesUtil;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 import software.amazon.event.kafkaconnector.util.StatusReporter;
 
 public class EventBridgeSinkTask extends SinkTask {
@@ -32,14 +33,15 @@ public class EventBridgeSinkTask extends SinkTask {
   private EventBridgeSinkWriter eventBridgeWriter;
   private ErrantRecordReporter dlq;
   private EventBridgeSinkConfig config;
-  private final StatusReporter statusReporter = new StatusReporter(1, TimeUnit.MINUTES);
+  private final PublishCounters counters = new PublishCounters();
+  private final StatusReporter statusReporter = new StatusReporter(1, TimeUnit.MINUTES, counters);
 
   @Override
   public void start(Map<String, String> properties) {
     log.info("Starting Kafka Connect task for EventBridgeSinkConnector");
 
     var config = new EventBridgeSinkConfig(properties);
-    var eventBridgeWriter = createWriter(properties);
+    var eventBridgeWriter = createWriter(properties, counters);
 
     ErrantRecordReporter dlq;
     try {
@@ -59,11 +61,12 @@ public class EventBridgeSinkTask extends SinkTask {
    * runs here as well so inconsistent configurations fail at task startup even when the connector
    * validate endpoint was bypassed.
    */
-  static EventBridgeSinkWriter createWriter(Map<String, String> properties) {
+  static EventBridgeSinkWriter createWriter(
+      Map<String, String> properties, PublishCounters counters) {
     EventBridgeSinkConfigValidator.validateCrossField(properties);
     var config = new EventBridgeSinkConfig(properties);
     if ("v2".equals(config.apiVersion)) {
-      return new EventBridgeV2Writer(EventBridgeV2ClientFactory.create(config), config);
+      return new EventBridgeV2Writer(EventBridgeV2ClientFactory.create(config), config, counters);
     }
     return new EventBridgeWriter(config);
   }
@@ -76,6 +79,10 @@ public class EventBridgeSinkTask extends SinkTask {
     this.eventBridgeWriter = eventBridgeWriter;
     this.dlq = dlq;
     statusReporter.startAsync();
+  }
+
+  PublishCounters counters() {
+    return counters;
   }
 
   @Override
@@ -99,14 +106,13 @@ public class EventBridgeSinkTask extends SinkTask {
           attempts,
           config.maxRetries);
 
+      var results = eventBridgeWriter.putItems(remainingRecords);
+      countSuccesses(results);
       remainingRecords =
-          eventBridgeWriter.putItems(remainingRecords).stream()
+          results.stream()
               .filter(EventBridgeResult::isFailure)
               .flatMap(it -> handleFailedEntries(it.failure(), attempts.get()))
               .toList();
-
-      // only report successful putEvents calls
-      statusReporter.setSentRecords(records.size());
 
       try {
         // TODO: improve retry delay implementation
@@ -128,6 +134,19 @@ public class EventBridgeSinkTask extends SinkTask {
         config.maxRetries);
   }
 
+  // a record succeeds in exactly one round, because only failures go into the next round
+  private void countSuccesses(List<? extends EventBridgeResult<?>> results) {
+    for (var result : results) {
+      if (result.isSuccess()) {
+        if (result.outcome() == EventBridgeResult.Outcome.DEDUPLICATED) {
+          counters.addDeduplicated(1);
+        } else {
+          counters.addPublished(1);
+        }
+      }
+    }
+  }
+
   private Stream<SinkRecord> handleFailedEntries(
       MappedSinkRecord<EventBridgeResult.Error> errorRecord, Integer attempts) {
 
@@ -141,8 +160,10 @@ public class EventBridgeSinkTask extends SinkTask {
         if (dlq != null) {
           log.trace("Sending record to dead-letter queue: {}", errorRecord);
           dlq.report(errorRecord.getSinkRecord(), failure);
+          counters.addDlq(1);
         } else {
           log.warn("Dead-letter queue not configured: skipping failed record", failure);
+          counters.addSkipped(1);
         }
         return empty();
 

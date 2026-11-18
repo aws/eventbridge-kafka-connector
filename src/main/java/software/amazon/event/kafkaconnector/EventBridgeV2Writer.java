@@ -8,14 +8,19 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.panic;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.reportOnly;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.Error.retry;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Outcome.DEDUPLICATED;
+import static software.amazon.event.kafkaconnector.EventBridgeResult.Outcome.PUBLISHED;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.failure;
 import static software.amazon.event.kafkaconnector.EventBridgeResult.success;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
+import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import software.amazon.awssdk.services.eventbridgev2.EventBridgeV2AsyncClient;
 import software.amazon.awssdk.services.eventbridgev2.model.AccessDeniedException;
@@ -24,18 +29,23 @@ import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequest;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequestEntry;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsResponse;
 import software.amazon.awssdk.services.eventbridgev2.model.ResourceNotFoundException;
-import software.amazon.event.kafkaconnector.batch.V2CountBatching;
+import software.amazon.awssdk.services.eventbridgev2.model.SuccessCode;
+import software.amazon.event.kafkaconnector.batch.V2Batching;
 import software.amazon.event.kafkaconnector.mapping.CloudEventsMapper;
 import software.amazon.event.kafkaconnector.mapping.RawPayloadMapper;
 import software.amazon.event.kafkaconnector.mapping.SchemaRegistryConfigurations;
+import software.amazon.event.kafkaconnector.mapping.V2EntryAssembly;
 import software.amazon.event.kafkaconnector.util.MappedSinkRecord;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 /**
  * Publishes Kafka records to an EventBridge Custom Event Bus via PutRawEvents.
  *
- * <p>Error mapping: per-entry error codes are report-only; configuration errors (invalid input,
- * access denied, resource not found) panic; all other request-level failures, including throttling,
- * schema registry unavailability, internal errors, and timeouts, are retried.
+ * <p>Error mapping: per-entry {@code ThrottlingException}, {@code InternalError}, and {@code
+ * Throttling} are retried; other per-entry error codes are report-only; configuration errors
+ * (invalid input, access denied, resource not found) panic; all other request-level failures,
+ * including throttling, schema registry unavailability, internal errors, and timeouts, are retried.
+ * Entries over the 1 MiB request limit are reported without being sent.
  */
 public class EventBridgeV2Writer implements EventBridgeSinkWriter {
 
@@ -44,15 +54,21 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
   private final EventBridgeV2AsyncClient client;
   private final EventBridgeSinkConfig config;
   private final Function<SinkRecord, EventBridgeResult<PutRawEventsRequestEntry>> mapper;
-  private final V2CountBatching batching = new V2CountBatching();
+  private final V2Batching batching = new V2Batching();
 
   public EventBridgeV2Writer(EventBridgeV2AsyncClient client, EventBridgeSinkConfig config) {
+    this(client, config, new PublishCounters());
+  }
+
+  public EventBridgeV2Writer(
+      EventBridgeV2AsyncClient client, EventBridgeSinkConfig config, PublishCounters counters) {
     this.client = client;
     this.config = config;
+    var assembly = new V2EntryAssembly(config, counters);
     this.mapper =
         "cloudevents".equals(config.v2PayloadStrategy)
-            ? new CloudEventsMapper(config)::map
-            : new RawPayloadMapper(config)::map;
+            ? new CloudEventsMapper(config, assembly)::map
+            : new RawPayloadMapper(config, assembly)::map;
   }
 
   @Override
@@ -61,17 +77,74 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
     var results = new ArrayList<EventBridgeResult<String>>();
     for (var record : records) {
       var result = mapper.apply(record);
-      if (result.isSuccess()) {
-        mapped.add(result.success());
-      } else {
+      if (result.isFailure()) {
         results.add(failure(result.failure()));
+        continue;
+      }
+      var entry = result.success().getValue();
+      if (V2Batching.size(entry) > V2Batching.MAX_BATCH_BYTES) {
+        results.add(failure(record, reportOnly(oversizeMessage(entry))));
+      } else {
+        mapped.add(result.success());
       }
     }
 
+    var blocked = new HashSet<String>();
     for (var batch : batching.apply(mapped)) {
-      results.addAll(send(batch));
+      results.addAll(sendHoldingBackBlockedGroups(batch, blocked));
     }
     return results;
+  }
+
+  /**
+   * Sends the entries of {@code batch} whose event group is not blocked, and fails the others with
+   * retry so that a group's records are retried after its earlier failed record, in their original
+   * order. A record that comes back with a retryable failure blocks its group for the rest of the
+   * call. Results are in batch order.
+   */
+  private List<EventBridgeResult<String>> sendHoldingBackBlockedGroups(
+      List<MappedSinkRecord<PutRawEventsRequestEntry>> batch, Set<String> blocked) {
+    var held = new boolean[batch.size()];
+    var toSend = new ArrayList<MappedSinkRecord<PutRawEventsRequestEntry>>();
+    for (int i = 0; i < batch.size(); i++) {
+      var group = groupOf(batch.get(i));
+      held[i] = group != null && blocked.contains(group);
+      if (!held[i]) {
+        toSend.add(batch.get(i));
+      }
+    }
+    var sent = (toSend.isEmpty() ? List.<EventBridgeResult<String>>of() : send(toSend)).iterator();
+
+    var results = new ArrayList<EventBridgeResult<String>>();
+    for (int i = 0; i < batch.size(); i++) {
+      var item = batch.get(i);
+      var group = groupOf(item);
+      if (held[i]) {
+        results.add(failure(item.getSinkRecord(), heldBack(group)));
+        continue;
+      }
+      var result = sent.next();
+      if (group != null && isRetry(result)) {
+        blocked.add(group);
+      }
+      results.add(result);
+    }
+    return results;
+  }
+
+  private static EventBridgeResult.Error heldBack(String group) {
+    return retry(
+        new RetriableException("held behind an earlier retryable failure in event group " + group));
+  }
+
+  private static boolean isRetry(EventBridgeResult<?> result) {
+    return result.isFailure()
+        && result.failure().getValue().getType() == EventBridgeResult.ErrorType.RETRY;
+  }
+
+  private static String groupOf(MappedSinkRecord<PutRawEventsRequestEntry> item) {
+    var systemMetadata = item.getValue().systemMetadata();
+    return systemMetadata == null ? null : systemMetadata.eventGroupId();
   }
 
   private List<EventBridgeResult<String>> send(
@@ -98,6 +171,14 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
     }
   }
 
+  /**
+   * Per-entry error codes that are transient and retried under the configured retry policy:
+   * ThrottlingException (event group over quota), InternalError (internal server error), and
+   * Throttling (service load shedding; the service plans to fold it into InternalError).
+   */
+  static final Set<String> RETRYABLE_ENTRY_ERROR_CODES =
+      Set.of("ThrottlingException", "InternalError", "Throttling");
+
   private static List<EventBridgeResult<String>> mapResponse(
       List<MappedSinkRecord<PutRawEventsRequestEntry>> batch, PutRawEventsResponse response) {
     var results = new ArrayList<EventBridgeResult<String>>();
@@ -105,17 +186,26 @@ public class EventBridgeV2Writer implements EventBridgeSinkWriter {
       var sinkRecord = batch.get(i).getSinkRecord();
       var resultEntry = response.entries().get(i);
       if (resultEntry.errorCode() != null) {
-        results.add(
-            failure(
-                sinkRecord,
-                reportOnly(
-                    String.format("%s: %s", resultEntry.errorCode(), resultEntry.errorMessage()))));
+        var message = String.format("%s: %s", resultEntry.errorCode(), resultEntry.errorMessage());
+        var error =
+            RETRYABLE_ENTRY_ERROR_CODES.contains(resultEntry.errorCode())
+                ? retry(new RetriableException(message))
+                : reportOnly(message);
+        results.add(failure(sinkRecord, error));
       } else {
-        // PUBLISHED and DEDUPLICATED are both successful publishes
-        results.add(success(sinkRecord, resultEntry.eventId()));
+        var outcome =
+            resultEntry.successCode() == SuccessCode.DEDUPLICATED ? DEDUPLICATED : PUBLISHED;
+        results.add(success(sinkRecord, resultEntry.eventId(), outcome));
       }
     }
     return results;
+  }
+
+  private static String oversizeMessage(PutRawEventsRequestEntry entry) {
+    return String.format(
+        "Entry is %d bytes, larger than the 1 MiB (%d bytes) PutRawEvents request limit counting"
+            + " data and metadata; not sent",
+        V2Batching.size(entry), V2Batching.MAX_BATCH_BYTES);
   }
 
   private static boolean isConfigurationError(Throwable cause) {

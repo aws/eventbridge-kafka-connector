@@ -153,6 +153,7 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
 | `aws.eventbridge.v2.schema.registry.connection.arn`          | For Confluent registries      |                              | The ARN of the EventBridge connection holding Confluent registry credentials.                                                                                                                                                                                                            |
 | `aws.eventbridge.v2.event.group.id`                          | No                            | `topic-partition`            | The `EventGroupId` strategy: `topic-partition` extends Kafka per-partition ordering onto the bus, `record-key` groups by record key, `none` disables grouping.                                                                                                                             |
 | `aws.eventbridge.v2.event.group.id.record.key.ack`           | With `record-key` grouping    | `false`                      | Must be `true` to acknowledge that record-key grouping can create unbounded event group cardinality.                                                                                                                                                                                     |
+| `aws.eventbridge.v2.event.group.id.missing.key`              | No                            | `fallback`                   | What `record-key` grouping does with a record whose key is null or empty: `fallback` groups it by `<topic>-<partition>`, `report` fails it without a retry (dead-letter queue if configured), `fail` fails the task. Has no effect under other grouping strategies. See [Records without a key](#records-without-a-key-under-record-key-grouping). |
 | `aws.eventbridge.v2.deduplication.id`                        | No                            | `topic-partition-offset`     | The `DeduplicationId` strategy; the default suppresses retry-induced duplicate publishes within the service deduplication window (300s). `none` disables deduplication.                                                                                                                    |
 
 > [!IMPORTANT]
@@ -189,18 +190,56 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   dead-letter queue if one is configured. v1 publishes them with `"value": null` in the event `detail`.
 - **Record metadata**: the v1 `detail` envelope (topic, partition, offset, key) does not exist in v2. Each v2 entry
   instead carries the `Metadata` keys `kafka.topic`, `kafka.partition`, `kafka.offset`, and `kafka.key` (when the
-  record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters.
+  record has a key; binary keys are base64-encoded). Subscribers can route on these with `METADATA`-scope filters. A
+  key that is empty (an empty string or an empty byte array) is treated as a missing key: the entry carries no
+  `kafka.key`, and `record-key` grouping handles it the same way as a record without a key.
+- **Request limits**: each `PutRawEvents` request carries at most 100 entries and at most 1 MiB (1,048,576 bytes) in
+  total. An entry's size is counted the way EventBridge counts it: the bytes of the data plus the UTF-8 bytes of each
+  metadata key and value. System metadata (the content type, `EventGroupId`, and `DeduplicationId`) does not count.
+  The connector starts a new request when the next entry would go over either limit, so request order follows record
+  order. An entry larger than 1 MiB on its own is never sent: it fails without a retry and goes to the dead-letter
+  queue if one is configured. Unlike v1, v2 mode has no S3 offloading for large payloads. For Avro and Protobuf
+  payloads that EventBridge deserializes through a schema registry, the service counts the expanded JSON rather than
+  the bytes the connector sends, so an entry or request that passes the connector's check can still be rejected by
+  the service. Leave headroom for that expansion when sizing Avro or Protobuf records.
+- **Identifier length**: EventBridge accepts `EventGroupId` and `DeduplicationId` values of 1 to 128 characters. A
+  value of 128 characters or fewer is sent unchanged. A longer value, for example from a long topic name or record
+  key, is replaced by its first 63 characters, a `-`, and the lowercase hex SHA-256 of the full value (UTF-8), which
+  is 128 characters in total. If character 63 is the first half of a surrogate pair, the prefix is 62 characters. The
+  result depends only on the full value, so grouping and deduplication keep working across retries and restarts.
 - **CloudEvents strategy**: each record becomes a CloudEvents 1.0 JSON envelope with `source`
   `kafka-connect.<connector-id>`, `type` from the configured `detail-type` mapping, `id` `<topic>-<partition>-<offset>`,
   `subject` set to the topic, and `time` from the configured time mapper. Values are carried as JSON `data`, or as
   `data_base64` when the value is `byte[]`.
 - **Ordering**: with the default `topic-partition` grouping, each Kafka partition maps to one event group, so FIFO
   subscribers receive events in partition order. Ingestion is limited per event group (1,500 per second, counted as
-  events plus their size in KB), so a topic's throughput scales with its partition count.
+  events plus their size in KB), so a topic's throughput scales with its partition count. When a record fails with a
+  retryable error, the connector stops sending later records of the same event group for the rest of that flush and
+  retries them after the failed record, in their original order. Records of other event groups are not held back.
+  One case is not covered: if a later record of the group was in the same request as the failed record and the bus
+  accepted it, that record is already stored ahead of the failed one. The connector leaves it published rather than
+  sending it again, which would store a duplicate when deduplication is off. Strict order within a group holds except
+  in this case.
 - **Deduplication**: with the default `topic-partition-offset` deduplication id, a record republished within the
   service deduplication window (300 seconds), e.g. after a retried batch, is suppressed by the bus and reported as
-  `DEDUPLICATED`. The connector treats this as a successful publish. Outside the window, delivery remains
-  *at-least-once*.
+  `DEDUPLICATED`. The connector treats this as a successful publish and counts it as `deduplicated`, not `published`,
+  in the status log (see [Debugging Event Flow](#debugging-event-flow-trace-level-logging)). Outside the window,
+  delivery remains *at-least-once*.
+
+#### Records without a key under record-key grouping
+
+With `aws.eventbridge.v2.event.group.id=record-key`, each record's key becomes its `EventGroupId`, so FIFO
+subscribers receive the events for one key in order. A record whose key is null, an empty string, or an empty byte
+array has no key to group by. `aws.eventbridge.v2.event.group.id.missing.key` decides what happens to it:
+
+| Policy               | Result                                                                                                                                                                                      | Effect on per-key order                                                                                   |
+|----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|
+| `fallback` (default) | Published with `EventGroupId` `<topic>-<partition>`. The connector logs a warning for the first such record on each topic-partition and counts every one as `keyFallbacks` in the status log. | Lost for that record: it is not ordered relative to the records of the key it should have had.            |
+| `report`             | Not published. Fails without a retry and goes to the dead-letter queue, or is logged and dropped if no dead-letter queue is configured.                                                     | Kept for published records. Configure a dead-letter queue, or records without keys are dropped.           |
+| `fail`               | Not published. The task fails with an error naming the record and the setting.                                                                                                              | Kept. The task stays down until the producer is fixed or the policy changes.                              |
+
+Choose `report` or `fail` when a record without a key means a producer bug and per-key order matters more than
+availability.
 
 #### v2 IAM permissions
 
@@ -689,10 +728,19 @@ follows:
 
 | Error | Handling |
 |-------|----------|
-| Per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema) | Only that record fails; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
+| Per-entry `ThrottlingException` (event group over its quota), `InternalError`, or `Throttling` (the service is shedding load) inside a successful response | Only that record is retried, under `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`. The other entries in the request are published once. If the retries run out, the task fails. |
+| Any other per-entry error (e.g. `VALIDATION_ERROR` when a payload does not match its schema, or a code the connector does not recognize) | Only that record fails, without a retry; it is sent to the dead-letter queue if configured, and the other entries in the request are published. |
 | `ThrottlingException`, `SchemaRegistryUnavailableException`, `InternalException`, timeouts | All records in the request are retried. |
 | `InvalidInputException`, `AccessDeniedException`, `ResourceNotFoundException` | Not retried; the task fails, since these indicate a configuration or permission problem. |
+| Entry larger than 1 MiB | Never sent; fails without a retry and goes to the dead-letter queue if configured. |
 | Per-entry `DEDUPLICATED` result | Treated as a successful publish. |
+
+> [!TIP]
+> EventBridge limits ingestion per event group to 1,500 per second, counted as events plus their size in KB. Under
+> the default `topic-partition` grouping, a busy partition can go over that limit, and its entries come back with
+> per-entry `ThrottlingException`. With the default retry settings (2 retries, 200 ms apart), a group that stays over
+> the limit for more than about half a second fails the task instead of dropping records. For hot topics in v2 mode,
+> raise `aws.eventbridge.retries.max` and `aws.eventbridge.retries.delay`, and spread the topic over more partitions.
 
 ### Authentication and Permissions
 
@@ -1038,18 +1086,27 @@ software.amazon.event.kafkaconnector.exceptions.EventBridgePartialFailureRespons
 ```
 
 > [!NOTE]
-> This size limit and S3 offloading apply to the classic `PutEvents` path only. In v2 mode, requests are batched by
-> count (up to 100 entries), and an entry the service rejects is reported per entry and sent to the dead-letter queue
-> if configured.
+> S3 offloading applies to the classic `PutEvents` path only. In v2 mode, see [Request
+> limits](#v2-behavior-differences) under v2 behavior differences.
 
 ### Debugging Event Flow (TRACE-level logging)
 
-The connector will periodically (asynchronously) on a per-task basis report the count of successful `PutEvents` API
-calls e.g.:
+The connector will periodically (asynchronously) on a per-task basis report cumulative record counts by final outcome,
+e.g.:
 
 ```console
-[2023-05-25 11:53:04,598] INFO [EventBridgeSink-Json|task-0] Total records sent=15 (software.amazon.event.kafkaconnector.util.StatusReporter:36)
+[2026-11-12 11:53:04,598] INFO [EventBridgeSink-Json|task-0] Total records: published=15 deduplicated=2 dlq=1 skipped=0 keyFallbacks=0 (software.amazon.event.kafkaconnector.util.StatusReporter:38)
 ```
+
+- `published`: records the bus accepted as new events.
+- `deduplicated`: records the bus accepted but suppressed as duplicates (v2 only, `DEDUPLICATED` results).
+- `dlq`: records that failed without a retry and were sent to the dead-letter queue.
+- `skipped`: records that failed without a retry and were dropped because no dead-letter queue is configured.
+- `keyFallbacks`: records without a key that `record-key` grouping placed in their `<topic>-<partition>` group
+  (v2 only).
+
+Each record is counted once, when its outcome is final, so records retried during a flush are not counted twice. A
+record that fails the task (retries exhausted or a non-retryable error) is not counted.
 
 > [!TIP]
 > Depending on your Kafka Connect environment, you can enable `[EventBridgeSink-Json|task-0]` logging style using this environment variable in Kafka Connect `CONNECT_LOG4J_APPENDER_STDOUT_LAYOUT_CONVERSIONPATTERN: "[%d] %p %X{connector.context}%m (%c:%L)%n"`

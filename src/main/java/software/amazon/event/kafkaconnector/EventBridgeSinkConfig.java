@@ -55,6 +55,8 @@ public class EventBridgeSinkConfig extends AbstractConfig {
   static final String AWS_V2_EVENT_GROUP_ID_CONFIG = "aws.eventbridge.v2.event.group.id";
   static final String AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG =
       "aws.eventbridge.v2.event.group.id.record.key.ack";
+  public static final String AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG =
+      "aws.eventbridge.v2.event.group.id.missing.key";
   static final String AWS_V2_DEDUPLICATION_ID_CONFIG = "aws.eventbridge.v2.deduplication.id";
 
   private static final String AWS_CONNECTOR_ID_DOC =
@@ -104,6 +106,8 @@ public class EventBridgeSinkConfig extends AbstractConfig {
       "The v2 SystemMetadata.EventGroupId strategy: 'topic-partition' (default, extends Kafka per-partition ordering onto the bus), 'none' (no grouping), or 'record-key' (group by record key; requires the acknowledgment flag because keys may have unbounded cardinality).";
   private static final String AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_DOC =
       "Acknowledgment that record-key event grouping can create unbounded event group cardinality. Required when 'aws.eventbridge.v2.event.group.id' is 'record-key'.";
+  private static final String AWS_V2_EVENT_GROUP_ID_MISSING_KEY_DOC =
+      "What record-key event grouping does with a record whose key is null or empty: 'fallback' (default, group by '<topic>-<partition>' and log a warning), 'report' (fail the record report-only, sending it to the dead-letter queue if one is configured), or 'fail' (fail the task). Has no effect under other grouping strategies.";
   private static final String AWS_V2_DEDUPLICATION_ID_DOC =
       "The v2 SystemMetadata.DeduplicationId strategy: 'topic-partition-offset' (default, suppresses retry-induced duplicate publishes within the service deduplication window) or 'none'.";
 
@@ -156,6 +160,7 @@ public class EventBridgeSinkConfig extends AbstractConfig {
   public final String v2SchemaRegistryConnectionArn;
   public final String v2EventGroupId;
   public final boolean v2EventGroupIdRecordKeyAck;
+  public final String v2EventGroupIdMissingKey;
   public final String v2DeduplicationId;
 
   public EventBridgeSinkConfig(final Map<?, ?> originalProps) {
@@ -184,6 +189,7 @@ public class EventBridgeSinkConfig extends AbstractConfig {
     this.v2SchemaRegistryConnectionArn = getString(AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG);
     this.v2EventGroupId = getString(AWS_V2_EVENT_GROUP_ID_CONFIG);
     this.v2EventGroupIdRecordKeyAck = getBoolean(AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG);
+    this.v2EventGroupIdMissingKey = getString(AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG);
     this.v2DeduplicationId = getString(AWS_V2_DEDUPLICATION_ID_CONFIG);
 
     var detailTypes = getList(AWS_DETAIL_TYPES_CONFIG);
@@ -203,7 +209,8 @@ public class EventBridgeSinkConfig extends AbstractConfig {
             + "detailTypeMapperClass={} timeMapperClass={} "
             + "apiVersion={} v2PayloadStrategy={} v2ContentType={} "
             + "v2SchemaRegistryUri={} v2SchemaRegistryConnectionArn={} "
-            + "v2EventGroupId={} v2EventGroupIdRecordKeyAck={} v2DeduplicationId={}",
+            + "v2EventGroupId={} v2EventGroupIdRecordKeyAck={} v2EventGroupIdMissingKey={} "
+            + "v2DeduplicationId={}",
         connectorId,
         eventBusArn,
         region,
@@ -227,6 +234,7 @@ public class EventBridgeSinkConfig extends AbstractConfig {
         v2SchemaRegistryConnectionArn,
         v2EventGroupId,
         v2EventGroupIdRecordKeyAck,
+        v2EventGroupIdMissingKey,
         v2DeduplicationId);
   }
 
@@ -357,6 +365,12 @@ public class EventBridgeSinkConfig extends AbstractConfig {
         false,
         Importance.MEDIUM,
         AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_DOC);
+    configDef.define(
+        AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG,
+        Type.STRING,
+        "fallback",
+        Importance.MEDIUM,
+        AWS_V2_EVENT_GROUP_ID_MISSING_KEY_DOC);
     configDef.define(
         AWS_V2_DEDUPLICATION_ID_CONFIG,
         Type.STRING,

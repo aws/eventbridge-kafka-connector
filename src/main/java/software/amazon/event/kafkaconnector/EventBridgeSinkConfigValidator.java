@@ -62,6 +62,7 @@ public class EventBridgeSinkConfigValidator {
           AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
           AWS_V2_EVENT_GROUP_ID_CONFIG,
           AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG,
+          AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG,
           AWS_V2_DEDUPLICATION_ID_CONFIG);
 
   public static void validateCrossField(Map<String, ?> originals) {
@@ -273,6 +274,12 @@ public class EventBridgeSinkConfigValidator {
       case AWS_V2_EVENT_GROUP_ID_CONFIG:
         {
           validateValueIn(configValue, "none", "topic-partition", "record-key");
+          break;
+        }
+
+      case AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG:
+        {
+          validateValueIn(configValue, "fallback", "report", "fail");
           break;
         }
 
