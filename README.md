@@ -198,7 +198,10 @@ support `aws.eventbridge.offloading.default.*`, `aws.eventbridge.eventbus.global
   metadata key and value. System metadata (the content type, `EventGroupId`, and `DeduplicationId`) does not count.
   The connector starts a new request when the next entry would go over either limit, so request order follows record
   order. An entry larger than 1 MiB on its own is never sent: it fails without a retry and goes to the dead-letter
-  queue if one is configured. Unlike v1, v2 mode has no S3 offloading for large payloads.
+  queue if one is configured. Unlike v1, v2 mode has no S3 offloading for large payloads. For Avro and Protobuf
+  payloads that EventBridge deserializes through a schema registry, the service counts the expanded JSON rather than
+  the bytes the connector sends, so an entry or request that passes the connector's check can still be rejected by
+  the service. Leave headroom for that expansion when sizing Avro or Protobuf records.
 - **Identifier length**: EventBridge accepts `EventGroupId` and `DeduplicationId` values of 1 to 128 characters. A
   value of 128 characters or fewer is sent unchanged. A longer value, for example from a long topic name or record
   key, is replaced by its first 63 characters, a `-`, and the lowercase hex SHA-256 of the full value (UTF-8), which

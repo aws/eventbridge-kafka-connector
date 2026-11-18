@@ -28,6 +28,10 @@ public class V2Batching {
    * Request size of an entry as the service counts it: the bytes of the data plus the UTF-8 bytes
    * of each metadata key and value. System metadata (content type, event group and deduplication
    * ids) does not count.
+   *
+   * <p>For Avro and Protobuf entries that EventBridge deserializes through a schema registry, the
+   * service counts the expanded JSON, not these bytes. Such an entry, or a request of them, can
+   * pass this check and still be rejected by the service.
    */
   public static long size(PutRawEventsRequestEntry entry) {
     long size = entry.data() == null ? 0 : entry.data().asByteArray().length;
