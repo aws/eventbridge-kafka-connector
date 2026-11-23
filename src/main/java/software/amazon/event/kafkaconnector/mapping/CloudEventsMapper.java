@@ -19,6 +19,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequestEntry;
 import software.amazon.event.kafkaconnector.EventBridgeResult;
 import software.amazon.event.kafkaconnector.EventBridgeSinkConfig;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 /** Maps Kafka records to v2 entries carrying a CloudEvents 1.0 structured JSON envelope. */
 public class CloudEventsMapper {
@@ -26,6 +27,7 @@ public class CloudEventsMapper {
   private static final String SOURCE_PREFIX = "kafka-connect.";
 
   private final EventBridgeSinkConfig config;
+  private final V2EntryAssembly assembly;
   private final DetailTypeMapper detailTypeMapper;
   private final TimeMapper timeMapper;
   private final JsonFormat jsonFormat = new JsonFormat();
@@ -33,7 +35,12 @@ public class CloudEventsMapper {
   private final JsonConverter jsonConverter = new JsonConverter();
 
   public CloudEventsMapper(EventBridgeSinkConfig config) {
+    this(config, new V2EntryAssembly(config, new PublishCounters()));
+  }
+
+  public CloudEventsMapper(EventBridgeSinkConfig config, V2EntryAssembly assembly) {
     this.config = config;
+    this.assembly = assembly;
     this.detailTypeMapper = MapperLoader.detailTypeMapper(config);
     this.timeMapper = MapperLoader.timeMapper(config);
     jsonConverter.configure(Map.of("schemas.enable", "false"), false);
@@ -43,6 +50,11 @@ public class CloudEventsMapper {
     var value = record.value();
     if (value == null) {
       return failure(record, reportOnly(RawPayloadMapper.TOMBSTONE_MESSAGE));
+    }
+
+    var group = assembly.eventGroup(record);
+    if (group.isFailure()) {
+      return failure(group.failure());
     }
 
     var builder =
@@ -73,7 +85,7 @@ public class CloudEventsMapper {
             .systemMetadata(
                 sm ->
                     sm.contentType("application/json")
-                        .eventGroupId(V2EntryAssembly.eventGroupId(config, record))
+                        .eventGroupId(group.success().getValue())
                         .deduplicationId(V2EntryAssembly.deduplicationId(config, record)))
             .build());
   }

@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 public class EventBridgeSinkTaskWriterSelectionTest {
 
@@ -30,7 +31,7 @@ public class EventBridgeSinkTaskWriterSelectionTest {
         "aws.eventbridge.eventbus.arn",
         "arn:aws:events:eu-central-1:123456789012:event-bus/my-bus");
 
-    var writer = EventBridgeSinkTask.createWriter(props);
+    var writer = EventBridgeSinkTask.createWriter(props, new PublishCounters());
     try {
       assertThat(writer).isInstanceOf(EventBridgeWriter.class);
     } finally {
@@ -47,7 +48,7 @@ public class EventBridgeSinkTaskWriterSelectionTest {
     props.put("aws.eventbridge.api.version", "v2");
     props.put("aws.eventbridge.v2.payload.strategy", "raw");
 
-    var writer = EventBridgeSinkTask.createWriter(props);
+    var writer = EventBridgeSinkTask.createWriter(props, new PublishCounters());
     try {
       assertThat(writer).isInstanceOf(EventBridgeV2Writer.class);
     } finally {
@@ -66,7 +67,7 @@ public class EventBridgeSinkTaskWriterSelectionTest {
     props.put("aws.eventbridge.v2.payload.strategy", "raw");
 
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () -> EventBridgeSinkTask.createWriter(props))
+            () -> EventBridgeSinkTask.createWriter(props, new PublishCounters()))
         .isInstanceOf(org.apache.kafka.common.config.ConfigException.class)
         .hasMessageContaining("event-busv2");
   }

@@ -6,7 +6,6 @@ package software.amazon.event.kafkaconnector.util;
 
 import static ch.qos.logback.classic.Level.INFO;
 import static ch.qos.logback.classic.Level.TRACE;
-import static java.lang.Integer.parseInt;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,11 +14,7 @@ import static software.amazon.event.kafkaconnector.TestUtils.toFixedGitCommitId;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.spi.ILoggingEvent;
-import java.util.Comparator;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Predicate;
-import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,8 +25,6 @@ import software.amazon.event.kafkaconnector.TestUtils.ListAppender;
 public class StatusReporterTest {
 
   private static ListAppender appender;
-
-  private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
   @BeforeAll
   public static void setup() {
@@ -50,12 +43,16 @@ public class StatusReporterTest {
   }
 
   @Test
-  @DisplayName("Status Reporter should log message of total sent records")
+  @DisplayName("Status Reporter should log cumulative counts by outcome")
   public void shouldContainLoggingEvent() {
-    var sut = new StatusReporter(100, MILLISECONDS);
+    var counters = new PublishCounters();
+    counters.addPublished(1);
+    counters.addDeduplicated(2);
+    counters.addDlq(3);
+    counters.addSkipped(4);
+    counters.addKeyFallbacks(5);
+    var sut = new StatusReporter(100, MILLISECONDS, counters);
     sut.startAsync();
-
-    var task = scheduler.scheduleAtFixedRate(() -> sut.setSentRecords(1), 175, 75, MILLISECONDS);
 
     await()
         .atMost(5, SECONDS)
@@ -66,28 +63,14 @@ public class StatusReporterTest {
                     .extracting(ILoggingEvent::getFormattedMessage)
                     .map(toFixedGitCommitId)
                     .contains("[GitCommitId] Starting status reporter")
-                    .filteredOn(startsWith("[GitCommitId] Total records sent="))
-                    .hasSizeGreaterThan(2)
-                    .isSortedAccordingTo(matchGroupOf("[GitCommitId] Total records sent=(\\d+)")));
+                    .contains(
+                        "[GitCommitId] Total records: published=1 deduplicated=2 dlq=3 skipped=4"
+                            + " keyFallbacks=5"));
 
-    task.cancel(false);
     sut.stopAsync();
   }
 
   private static Predicate<? super ILoggingEvent> level(Level expectedLevel) {
     return (event) -> event.getLevel() == expectedLevel;
-  }
-
-  private static Predicate<? super String> startsWith(String prefix) {
-    return (value) -> value.startsWith(prefix);
-  }
-
-  private static Comparator<String> matchGroupOf(final String regex) {
-    var pattern = Pattern.compile(regex);
-    return Comparator.comparing(
-        it -> {
-          var matcher = pattern.matcher(it);
-          return matcher.find() ? parseInt(matcher.group(1)) : -1;
-        });
   }
 }

@@ -14,6 +14,7 @@ import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.services.eventbridgev2.model.PutRawEventsRequestEntry;
 import software.amazon.event.kafkaconnector.EventBridgeResult;
 import software.amazon.event.kafkaconnector.EventBridgeSinkConfig;
+import software.amazon.event.kafkaconnector.util.PublishCounters;
 
 /**
  * Maps Kafka records to v2 entries by forwarding the record value bytes unchanged with the
@@ -25,9 +26,15 @@ public class RawPayloadMapper {
       "Record has a null value (tombstone); v2 mode has no payload to publish";
 
   private final EventBridgeSinkConfig config;
+  private final V2EntryAssembly assembly;
 
   public RawPayloadMapper(EventBridgeSinkConfig config) {
+    this(config, new V2EntryAssembly(config, new PublishCounters()));
+  }
+
+  public RawPayloadMapper(EventBridgeSinkConfig config, V2EntryAssembly assembly) {
     this.config = config;
+    this.assembly = assembly;
   }
 
   public EventBridgeResult<PutRawEventsRequestEntry> map(SinkRecord record) {
@@ -45,6 +52,11 @@ public class RawPayloadMapper {
       return failure(record, reportOnly(unsupportedTypeMessage(value)));
     }
 
+    var group = assembly.eventGroup(record);
+    if (group.isFailure()) {
+      return failure(group.failure());
+    }
+
     return success(
         record,
         PutRawEventsRequestEntry.builder()
@@ -53,7 +65,7 @@ public class RawPayloadMapper {
             .systemMetadata(
                 sm ->
                     sm.contentType(config.v2ContentType)
-                        .eventGroupId(V2EntryAssembly.eventGroupId(config, record))
+                        .eventGroupId(group.success().getValue())
                         .deduplicationId(V2EntryAssembly.deduplicationId(config, record)))
             .build());
   }

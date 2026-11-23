@@ -80,6 +80,7 @@ public class EventBridgeSinkConfigValidatorTest {
         AWS_V2_SCHEMA_REGISTRY_CONNECTION_ARN_CONFIG,
         AWS_V2_EVENT_GROUP_ID_CONFIG,
         AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG,
+        AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG,
         AWS_V2_DEDUPLICATION_ID_CONFIG
       })
   public void v2OnlySettingInV1ModeFails(String v2Key) {
@@ -165,6 +166,30 @@ public class EventBridgeSinkConfigValidatorTest {
     configValue.value("partition");
 
     assertThrows(ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"fallback", "report", "fail"})
+  public void validV2MissingKeyPolicy(String policy) {
+    var configValue = new ConfigValue(AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG);
+    configValue.value(policy);
+
+    EventBridgeSinkConfigValidator.validate(configValue);
+  }
+
+  @Test
+  public void invalidV2MissingKeyPolicyFailsNamingAllowedValues() {
+    var configValue = new ConfigValue(AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG);
+    configValue.value("drop");
+
+    var e =
+        assertThrows(
+            ConfigException.class, () -> EventBridgeSinkConfigValidator.validate(configValue));
+    assertThat(e.getMessage())
+        .contains(AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG)
+        .contains("fallback")
+        .contains("report")
+        .contains("fail");
   }
 
   @ParameterizedTest
@@ -277,6 +302,15 @@ public class EventBridgeSinkConfigValidatorTest {
     var props = v2Props();
     props.put(AWS_V2_EVENT_GROUP_ID_CONFIG, "record-key");
     props.put(AWS_V2_EVENT_GROUP_ID_RECORD_KEY_ACK_CONFIG, true);
+
+    EventBridgeSinkConfigValidator.validateCrossField(props);
+  }
+
+  @Test
+  public void v2MissingKeyPolicyUnderTopicPartitionGroupingPasses() {
+    var props = v2Props();
+    props.put(AWS_V2_EVENT_GROUP_ID_CONFIG, "topic-partition");
+    props.put(AWS_V2_EVENT_GROUP_ID_MISSING_KEY_CONFIG, "report");
 
     EventBridgeSinkConfigValidator.validateCrossField(props);
   }
